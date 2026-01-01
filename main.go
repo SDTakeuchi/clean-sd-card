@@ -7,30 +7,36 @@ package main
 //	go run main.go -dry-run -overwrite
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 const (
-	dirFrom = "E:\\DCIM\\100MSDCF"
-	dirTo   = "D:\\raw"
-)
-
-var (
-	extensionsToCopy = []string{"arw", "raw"}
-	flagDryRun       = false // default: false
-	flagOverwrite    = false // default: false; if true, overwrite existing files in dirTo
+	defaultDirSrc = "E:\\DCIM\\100MSDCF"
+	defaultDirDst = "D:\\raw"
 )
 
 func main() {
+	var (
+		extensionsToCopy          = []string{"arw", "raw"}
+		flagDryRun, flagOverwrite bool
+		dirSrc, dirDst            string
+	)
+
 	// read options from command line.
 	// set flagDryRun and flagOverwrite accordingly.
 	flag.BoolVar(&flagDryRun, "dry-run", false, "Simulate operations without modifying files")
 	flag.BoolVar(&flagOverwrite, "overwrite", false, "Overwrite existing files in destination")
+	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
+	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
 	flag.Parse()
 
 	if flagDryRun {
@@ -42,89 +48,131 @@ func main() {
 		fmt.Println("Running in Skip-Existing mode. Existing files in destination will be skipped.")
 	}
 
-	// copy files with specified extensions
-	// skip execution if flagDryRun is true
-	// Note: copyFiles handles dry-run logic internally (counting instead of copying)
-
-	if !flagDryRun {
-		if err := os.MkdirAll(dirTo, 0755); err != nil {
-			fmt.Printf("Error creating destination directory: %v\n", err)
-			return
-		}
-	}
-
-	totalCopied := 0
-	for _, ext := range extensionsToCopy {
-		n, err := copyFiles(dirFrom, dirTo, ext, flagDryRun, flagOverwrite)
-		if err != nil {
-			fmt.Printf("Error processing .%s files: %v\n", ext, err)
-		}
-		totalCopied += n
-	}
-
-	// remove files from dirFrom
-	// skip execution if flagDryRun is true
-	removedCount := 0
-	if !flagDryRun {
-		var err error
-		removedCount, err = removeFiles(dirFrom)
-		if err != nil {
-			fmt.Printf("Error removing files: %v\n", err)
-		}
+	totalCopied, removedCount, err := cleanSDCard(extensionsToCopy, dirSrc, dirDst, flagDryRun, flagOverwrite)
+	if err != nil {
+		log.Fatalf("Error cleaning SD card: %s", err.Error())
 	}
 
 	// print summary of operations
 	fmt.Printf("\nSummary:\nFiles Copied: %d\nFiles Removed: %d\n", totalCopied, removedCount)
 }
 
-// copies files with given extension from dirFrom to dirTo
+// cleans the SD card by copying files from dirSrc to dirDst and removing files from dirSrc
+// returns number of files copied and number of files removed and error if any
+func cleanSDCard(extensionsToCopy []string, dirSrc, dirDst string, flagDryRun, flagOverwrite bool) (int, int, error) {
+	// copy files with specified extensions
+	// skip execution if flagDryRun is true
+	// Note: copyFiles handles dry-run logic internally (counting instead of copying)
+	if !flagDryRun {
+		if err := os.MkdirAll(dirDst, 0755); err != nil {
+			return 0, 0, fmt.Errorf("Error creating destination directory: %w", err)
+		}
+	}
+
+	totalCopied := 0
+	for _, ext := range extensionsToCopy {
+		n, err := copyFiles(dirSrc, dirDst, ext, flagDryRun, flagOverwrite)
+		if err != nil {
+			log.Fatalf(`Error processing .%s
+files_copied: %d
+errors:\n%s`,
+				ext,
+				n,
+				err.Error())
+		}
+		totalCopied += n
+	}
+
+	// remove files from dirSrc
+	// skip execution if flagDryRun is true
+	removedCount := 0
+	if !flagDryRun {
+		var err error
+		removedCount, err = removeFiles(dirSrc)
+		if err != nil {
+			return totalCopied, removedCount, fmt.Errorf("Error removing files: %w", err)
+		}
+	}
+
+	return totalCopied, removedCount, nil
+}
+
+type fileCopyError struct {
+	fileName string
+	err      error
+}
+
+func (e fileCopyError) Error() string {
+	return fmt.Sprintf("error copying file %s: %s\n", e.fileName, e.err.Error())
+}
+
+// copies files with given extension from dirSrc to dirDst
 // if flagDryRun is true, do not perform actual copy, just count files to be copied
-// if flagOverwrite is true, overwrite existing files in dirTo
-// if flagOverwrite is false, skip files that already exist in dirTo
+// if flagOverwrite is true, overwrite existing files in dirDst
+// if flagOverwrite is false, skip files that already exist in dirDst
 //
 // returns number of files copied and error if any
-func copyFiles(dirFrom, dirTo, ext string, flagDryRun, flagOverwrite bool) (int, error) {
-	entries, err := os.ReadDir(dirFrom)
+func copyFiles(srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int, error) {
+	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return 0, err
 	}
 
-	count := 0
+	var count atomic.Int32
+	var wg sync.WaitGroup
+	errsChan := make(chan fileCopyError)
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 
-		name := entry.Name()
-		if !strings.EqualFold(filepath.Ext(name), "."+ext) {
-			continue
-		}
-
-		srcPath := filepath.Join(dirFrom, name)
-		dstPath := filepath.Join(dirTo, name)
-
-		if !flagOverwrite {
-			if _, err := os.Stat(dstPath); err == nil {
-				fmt.Printf("Skipping copying existing file: %s\n", name)
-				continue
+		wg.Go(func() {
+			name := entry.Name()
+			if !strings.EqualFold(filepath.Ext(name), "."+ext) {
+				return
 			}
-		}
 
-		if flagDryRun {
-			fmt.Printf("[DryRun] Would copy %s\n", name)
-			count++
-			continue
-		}
+			srcPath := filepath.Join(srcDir, name)
+			dstPath := filepath.Join(dstDir, name)
 
-		if err := copyFile(srcPath, dstPath); err != nil {
-			return count, err
-		}
-		fmt.Printf("Copied %s\n", name)
-		count++
+			if !flagOverwrite {
+				if _, err = os.Stat(dstPath); err == nil {
+					fmt.Printf("Skipping copying existing file: %s\n", name)
+					return
+				}
+			}
+
+			if flagDryRun {
+				fmt.Printf("[DryRun] Would copy %s\n", name)
+				count.Add(1)
+				return
+			}
+
+			if err = copyFile(srcPath, dstPath); err != nil {
+				errsChan <- fileCopyError{fileName: name, err: err}
+				return
+			}
+
+			fmt.Printf("Copied %s\n", name)
+			count.Add(1)
+		})
 	}
-	return count, nil
+
+	wg.Wait()
+
+	if len(errsChan) > 0 {
+		var builder strings.Builder
+		for e := range errsChan {
+			builder.WriteString(e.Error())
+		}
+		err = errors.New(builder.String())
+	}
+
+	return int(count.Load()), err
 }
 
+// copies a file from src dir to dst dir
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
