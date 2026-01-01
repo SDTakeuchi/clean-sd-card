@@ -4,7 +4,7 @@ A simple Go utility designed to offload RAW image files from an SD card to a loc
 
 ## Description
 
-This tool scans a specific source directory (hardcoded as `E:\DCIM\100MSDCF`) for files with `.arw` or `.raw` extensions. It copies them to a destination directory (hardcoded as `D:\raw`) and then removes **all** files from the source directory to free up space.
+This tool scans a source directory for files with `.arw` or `.raw` extensions. It copies them to a destination directory and then removes **all** files from the source directory to free up space.
 
 ## Features
 
@@ -18,8 +18,6 @@ This tool scans a specific source directory (hardcoded as `E:\DCIM\100MSDCF`) fo
 ### Prerequisites
 
 - Go installed on your machine.
-- Source path `E:\DCIM\100MSDCF` (or modify `main.go`).
-- Destination path `D:\raw` (or modify `main.go`).
 
 ### Running the tool
 
@@ -31,6 +29,8 @@ go run main.go [flags]
 
 ### Flags
 
+- `-src`: Source directory (default: `E:\DCIM\100MSDCF`).
+- `-dst`: Destination directory (default: `D:\raw`).
 - `-dry-run`: Simulate operations without modifying any files. Useful for verification.
 - `-overwrite`: Overwrite existing files in the destination directory. Default behavior skips existing files.
 
@@ -54,6 +54,8 @@ Copy files and overwrite duplicates in the destination:
 go run main.go -overwrite
 ```
 
-## Configuration
-
-Currently, the source and destination paths are hardcoded in the `const` block of `main.go`. To change these paths, edit the file and re-run the program.
+**4. Custom Source and Destination**
+Specify custom directories:
+```bash
+go run main.go -src /path/to/sd/card -dst /path/to/backup
+```
