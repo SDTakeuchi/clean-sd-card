@@ -26,40 +26,42 @@ const (
 
 func main() {
 	var (
-		extensionsToCopy          = []string{"arw", "raw"}
-		flagDryRun, flagOverwrite bool
-		dirSrc, dirDst            string
+		editFileExtensions                                   = []string{"xmp"} // lightroom's default edit file extension when editted in local machine
+		extensionsToCopy                                     = []string{"arw", "raw"}
+		flagDryRun, flagOverwrite, flagDeleteZombieEditFiles bool
+		dirSrc, dirDst                                       string
 	)
 
 	// read options from command line.
 	// set flagDryRun and flagOverwrite accordingly.
-	flag.BoolVar(&flagDryRun, "dry-run", false, "Simulate operations without modifying files")
-	flag.BoolVar(&flagOverwrite, "overwrite", false, "Overwrite existing files in destination")
+	flag.BoolVar(&flagDryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
+	flag.BoolVar(&flagOverwrite, "overwrite", false, "Overwrite existing files in destination (default: false)")
+	flag.BoolVar(&flagDeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
 	flag.Parse()
 
 	if flagDryRun {
-		fmt.Println("Running in Dry-Run mode. No files will be modified.")
+		log.Println("Running in Dry-Run mode. No files will be modified.")
 	}
 	if flagOverwrite {
-		fmt.Println("Running in Overwrite mode. Existing files in destination will be overwritten.")
+		log.Println("Running in Overwrite mode. Existing files in destination will be overwritten.")
 	} else {
-		fmt.Println("Running in Skip-Existing mode. Existing files in destination will be skipped.")
+		log.Println("Running in Skip-Existing mode. Existing files in destination will be skipped.")
 	}
 
-	totalCopied, removedCount, err := cleanSDCard(extensionsToCopy, dirSrc, dirDst, flagDryRun, flagOverwrite)
+	totalCopied, removedCount, err := cleanSDCard(editFileExtensions, extensionsToCopy, dirSrc, dirDst, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles)
 	if err != nil {
 		log.Fatalf("Error cleaning SD card: %s", err.Error())
 	}
 
 	// print summary of operations
-	fmt.Printf("\nSummary:\nFiles Copied: %d\nFiles Removed: %d\n", totalCopied, removedCount)
+	log.Printf("\nSummary:\nFiles Copied: %d\nFiles Removed: %d\n", totalCopied, removedCount)
 }
 
 // cleans the SD card by copying files from dirSrc to dirDst and removing files from dirSrc
 // returns number of files copied and number of files removed and error if any
-func cleanSDCard(extensionsToCopy []string, dirSrc, dirDst string, flagDryRun, flagOverwrite bool) (int, int, error) {
+func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst string, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles bool) (int, int, error) {
 	// copy files with specified extensions
 	// skip execution if flagDryRun is true
 	// Note: copyFiles handles dry-run logic internally (counting instead of copying)
@@ -91,6 +93,18 @@ errors:\n%s`,
 		removedCount, err = removeFiles(dirSrc)
 		if err != nil {
 			return totalCopied, removedCount, fmt.Errorf("Error removing files: %w", err)
+		}
+	}
+
+	// delete zombie edit files
+	// skip execution if flagDryRun is true
+	if !flagDryRun {
+		for _, editFileExtension := range editFileExtensions {
+			count, err := deleteZombieEditFiles(editFileExtension, dirSrc, extensionsToCopy, flagDeleteZombieEditFiles)
+			if err != nil {
+				return totalCopied, removedCount, fmt.Errorf("Error deleting zombie edit files with extension %s: %w", editFileExtension, err)
+			}
+			removedCount += count
 		}
 	}
 
@@ -138,13 +152,13 @@ func copyFiles(srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int,
 
 			if !flagOverwrite {
 				if _, err = os.Stat(dstPath); err == nil {
-					fmt.Printf("Skipping copying existing file: %s\n", name)
+					log.Printf("Skipping copying existing file: %s\n", name)
 					return
 				}
 			}
 
 			if flagDryRun {
-				fmt.Printf("[DryRun] Would copy %s\n", name)
+				log.Printf("[DryRun] Would copy %s\n", name)
 				count.Add(1)
 				return
 			}
@@ -154,7 +168,7 @@ func copyFiles(srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int,
 				return
 			}
 
-			fmt.Printf("Copied %s\n", name)
+			log.Printf("Copied %s\n", name)
 			count.Add(1)
 		})
 	}
@@ -162,11 +176,9 @@ func copyFiles(srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int,
 	wg.Wait()
 
 	if len(errsChan) > 0 {
-		var builder strings.Builder
 		for e := range errsChan {
-			builder.WriteString(e.Error())
+			err = errors.Join(err, e)
 		}
-		err = errors.New(builder.String())
 	}
 
 	return int(count.Load()), err
@@ -208,8 +220,89 @@ func removeFiles(dir string) (int, error) {
 		if err := os.Remove(path); err != nil {
 			return count, err
 		}
-		fmt.Printf("Removed %s\n", entry.Name())
+		log.Printf("Removed %s\n", entry.Name())
 		count++
 	}
 	return count, nil
+}
+
+// deletes all zombie Edit files (no arw/raw files with the same name exists) in the directory
+//
+// editFileExtension: extension of edit files to delete
+// dir: directory to delete zombie Edit files from
+// isRecursive: if true, delete zombie Edit files in subdirectories recursively
+// returns number of files deleted and error if any
+func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []string, isRecursive bool) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("error reading directory: %w", err)
+	}
+
+	var count atomic.Int32
+	var wg sync.WaitGroup
+	var errsChan chan error
+
+	for _, entry := range entries {
+		wg.Go(func() {
+			if entry.IsDir() {
+				if isRecursive {
+					n, err := deleteZombieEditFiles(editFileExtension, filepath.Join(dir, entry.Name()), rawFileExtensions, isRecursive)
+					if err != nil {
+						errsChan <- fmt.Errorf("error deleting zombie edit files in subdirectory with name %s: %w", entry.Name(), err)
+					}
+					count.Add(int32(n))
+				}
+				return
+			}
+
+			editFileName := entry.Name()
+			if !strings.HasSuffix(editFileName, "."+editFileExtension) {
+				return
+			}
+
+			// Check if any corresponding raw file exists
+			extTrimmed := strings.TrimSuffix(editFileName, "."+editFileExtension)
+			hasCorrespondingRawFile := false
+
+			for _, rawFileExt := range rawFileExtensions {
+				expectedRawFileName := extTrimmed + "." + rawFileExt
+
+				_, err := os.Stat(filepath.Join(dir, expectedRawFileName))
+				if err == nil {
+					// Raw file exists, this is not a zombie
+					hasCorrespondingRawFile = true
+					break
+				}
+				if !errors.Is(err, os.ErrNotExist) {
+					// unexpected error, return error
+					errsChan <- fmt.Errorf("error checking if %s exists: %w", expectedRawFileName, err)
+					return
+				}
+			}
+
+			if hasCorrespondingRawFile {
+				// Not a zombie, skip deletion
+				return
+			}
+
+			// No corresponding raw file found, delete the zombie edit file
+			if err := os.Remove(filepath.Join(dir, editFileName)); err != nil {
+				errsChan <- fmt.Errorf("error removing zombie edit file: %s: %w", editFileName, err)
+				return
+			}
+
+			log.Printf("Removed zombie edit file: %s\n", editFileName)
+			count.Add(1)
+		})
+	}
+
+	wg.Wait()
+
+	if len(errsChan) > 0 {
+		for e := range errsChan {
+			err = errors.Join(err, e)
+		}
+	}
+
+	return int(count.Load()), err
 }
