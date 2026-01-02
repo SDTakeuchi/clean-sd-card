@@ -10,6 +10,7 @@ This tool scans a source directory for files with `.arw` or `.raw` extensions. I
 
 - **Copy:** Safely copies `.arw` and `.raw` files to the destination.
 - **Clean:** Removes all files from the source directory after processing.
+- **Zombie Edit File Cleanup:** Automatically removes orphaned `.xmp` edit files (Lightroom sidecar files) that no longer have a corresponding RAW file.
 - **Dry Run:** Simulate the process to see what would happen without making actual changes.
 - **Overwrite Control:** Option to overwrite existing files in the destination.
 
@@ -33,6 +34,7 @@ go run main.go [flags]
 - `-dst`: Destination directory (default: `D:\raw`).
 - `-dry-run`: Simulate operations without modifying any files. Useful for verification.
 - `-overwrite`: Overwrite existing files in the destination directory. Default behavior skips existing files.
+- `-delete-zombie-edit-files`: Delete orphaned `.xmp` edit files that have no corresponding RAW file (default: `true`).
 
 ### Examples
 
@@ -58,4 +60,10 @@ go run main.go -overwrite
 Specify custom directories:
 ```bash
 go run main.go -src /path/to/sd/card -dst /path/to/backup
+```
+
+**5. Skip Zombie Edit File Cleanup**
+Keep orphaned `.xmp` files in the destination:
+```bash
+go run main.go -delete-zombie-edit-files=false
 ```
