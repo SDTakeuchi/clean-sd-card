@@ -210,6 +210,7 @@ func removeFiles(dir string) (int, error) {
 				return
 			}
 			log.Printf("removed %s\n", entry.Name())
+			count.Add(1)
 		})
 	}
 
