@@ -39,6 +39,7 @@ func main() {
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
 	flag.Parse()
 
+	log.Printf("Starting copying files from %s to %s with extensions %v\n", dirSrc, dirDst, extensionsToCopy)
 	if flagDryRun {
 		log.Println("Running in Dry-Run mode. No files will be modified.")
 	}
