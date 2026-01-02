@@ -51,7 +51,7 @@ func main() {
 
 	totalCopied, removedCount, err := cleanSDCard(editFileExtensions, extensionsToCopy, dirSrc, dirDst, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles)
 	if err != nil {
-		log.Fatalf("Error cleaning SD card: %s", err.Error())
+		log.Fatalf("failed cleaning SD card: %s", err.Error())
 	}
 
 	log.Printf("\nSummary:\nFiles Copied: %d\nFiles Removed: %d\n", totalCopied, removedCount)
@@ -62,7 +62,7 @@ func main() {
 func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst string, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles bool) (int, int, error) {
 	if !flagDryRun {
 		if err := os.MkdirAll(dirDst, 0755); err != nil {
-			return 0, 0, fmt.Errorf("creating destination directory: %w", err)
+			return 0, 0, fmt.Errorf("failed to create destination directory: %w", err)
 		}
 	}
 
@@ -70,7 +70,7 @@ func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst s
 	for _, ext := range extensionsToCopy {
 		n, err := copyFiles(dirSrc, dirDst, ext, flagDryRun, flagOverwrite)
 		if err != nil {
-			return totalCopied, 0, fmt.Errorf("processing .%s files (copied %d): %w", ext, n, err)
+			return totalCopied, 0, fmt.Errorf("failed to copy .%s files (copied %d): %w", ext, n, err)
 		}
 		totalCopied += n
 	}
@@ -80,7 +80,7 @@ func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst s
 		var err error
 		removedCount, err = removeFiles(dirSrc)
 		if err != nil {
-			return totalCopied, removedCount, fmt.Errorf("removing files: %w", err)
+			return totalCopied, removedCount, fmt.Errorf("failed to remove source files: %w", err)
 		}
 	}
 
@@ -88,7 +88,7 @@ func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst s
 		for _, editFileExtension := range editFileExtensions {
 			count, err := deleteZombieEditFiles(editFileExtension, dirDst, extensionsToCopy, true)
 			if err != nil {
-				return totalCopied, removedCount, fmt.Errorf("deleting zombie edit files with extension %s: %w", editFileExtension, err)
+				return totalCopied, removedCount, fmt.Errorf("failed to delete zombie edit files with extension %s: %w", editFileExtension, err)
 			}
 			removedCount += count
 		}
@@ -103,7 +103,7 @@ type fileCopyError struct {
 }
 
 func (e fileCopyError) Error() string {
-	return fmt.Sprintf("copying file %s: %s", e.fileName, e.err.Error())
+	return fmt.Sprintf("failed to copy file %s: %s", e.fileName, e.err.Error())
 }
 
 // copyFiles copies files with the given extension from srcDir to dstDir.
@@ -136,13 +136,13 @@ func copyFiles(srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int,
 
 			if !flagOverwrite {
 				if _, statErr := os.Stat(dstPath); statErr == nil {
-					log.Printf("Skipping copying existing file: %s\n", name)
+					log.Printf("skipping copying existing file: %s\n", name)
 					return
 				}
 			}
 
 			if flagDryRun {
-				log.Printf("[DryRun] Would copy %s\n", name)
+				log.Printf("[dry-run] would copy %s\n", name)
 				count.Add(1)
 				return
 			}
@@ -152,20 +152,20 @@ func copyFiles(srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int,
 				return
 			}
 
-			log.Printf("Copied %s\n", name)
+			log.Printf("copied %s\n", name)
 			count.Add(1)
 		})
 	}
 
 	wg.Wait()
-	close(errsChan)
 
-	var errs error
-	for e := range errsChan {
-		errs = errors.Join(errs, e)
+	if len(errsChan) > 0 {
+		for e := range errsChan {
+			err = errors.Join(err, e)
+		}
 	}
 
-	return int(count.Load()), errs
+	return int(count.Load()), err
 }
 
 // copyFile copies a single file from src to dst.
@@ -194,20 +194,34 @@ func removeFiles(dir string) (int, error) {
 		return 0, err
 	}
 
-	count := 0
+	var count atomic.Int32
+	var wg sync.WaitGroup
+	errsChan := make(chan error, len(entries))
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 
-		path := filepath.Join(dir, entry.Name())
-		if err := os.Remove(path); err != nil {
-			return count, err
-		}
-		log.Printf("Removed %s\n", entry.Name())
-		count++
+		wg.Go(func() {
+			path := filepath.Join(dir, entry.Name())
+			if err := os.Remove(path); err != nil {
+				errsChan <- fmt.Errorf("failed to remove file %s: %w", entry.Name(), err)
+				return
+			}
+			log.Printf("removed %s\n", entry.Name())
+		})
 	}
-	return count, nil
+
+	wg.Wait()
+
+	if len(errsChan) > 0 {
+		for e := range errsChan {
+			err = errors.Join(err, e)
+		}
+	}
+
+	return int(count.Load()), err
 }
 
 // deleteZombieEditFiles deletes edit files that have no corresponding raw file.
@@ -230,7 +244,7 @@ func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []st
 				if isRecursive {
 					n, err := deleteZombieEditFiles(editFileExtension, filepath.Join(dir, entry.Name()), rawFileExtensions, isRecursive)
 					if err != nil {
-						errsChan <- fmt.Errorf("processing subdirectory %s: %w", entry.Name(), err)
+						errsChan <- fmt.Errorf("failed to process subdirectory %s: %w", entry.Name(), err)
 						return
 					}
 					count.Add(int32(n))
@@ -243,16 +257,16 @@ func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []st
 				return
 			}
 
-			extTrimmed := strings.TrimSuffix(editFileName, "."+editFileExtension)
+			editFileNameWithoutExt := strings.TrimSuffix(editFileName, "."+editFileExtension)
 			hasCorrespondingRawFile := false
 
 			for _, rawFileExt := range rawFileExtensions {
-				expectedRawFileName := extTrimmed + "." + rawFileExt
+				expectedRawFileName := editFileNameWithoutExt + "." + rawFileExt
 				if _, err := os.Stat(filepath.Join(dir, expectedRawFileName)); err == nil {
 					hasCorrespondingRawFile = true
 					break
 				} else if !errors.Is(err, os.ErrNotExist) {
-					errsChan <- fmt.Errorf("checking if %s exists: %w", expectedRawFileName, err)
+					errsChan <- fmt.Errorf("failed to check if %s exists: %w", expectedRawFileName, err)
 					return
 				}
 			}
@@ -262,22 +276,22 @@ func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []st
 			}
 
 			if err := os.Remove(filepath.Join(dir, editFileName)); err != nil {
-				errsChan <- fmt.Errorf("removing zombie edit file %s: %w", editFileName, err)
+				errsChan <- fmt.Errorf("failed to remove zombie edit file %s: %w", editFileName, err)
 				return
 			}
 
-			log.Printf("Removed zombie edit file: %s\n", editFileName)
+			log.Printf("removed zombie edit file: %s\n", editFileName)
 			count.Add(1)
 		})
 	}
 
 	wg.Wait()
-	close(errsChan)
 
-	var errs error
-	for e := range errsChan {
-		errs = errors.Join(errs, e)
+	if len(errsChan) > 0 {
+		for e := range errsChan {
+			err = errors.Join(err, e)
+		}
 	}
 
-	return int(count.Load()), errs
+	return int(count.Load()), err
 }
