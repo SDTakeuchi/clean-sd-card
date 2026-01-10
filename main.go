@@ -17,6 +17,13 @@ func main() {
 	var (
 		flagDryRun, flagOverwrite, flagDeleteZombieEditFiles bool
 		dirSrc, dirDst                                       string
+
+		// put pictures in a new directory when more than N pictures were taken in the same day.
+		minDailyPhotosForDir int
+		// minDailyPhotosForEvent is the threshold for detecting a multi-day shooting event.
+		// When 2 or more consecutive days each have N or more photos, all photos from
+		// those consecutive days are grouped together and moved into a new event directory.
+		minDailyPhotosForEvent int
 	)
 
 	flag.BoolVar(&flagDryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
@@ -24,7 +31,9 @@ func main() {
 	flag.BoolVar(&flagDeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
-	flag.Parse()
+	flag.IntVar(&minDailyPhotosForDir, "min-photos-per-day-to-create-new-dir", defaultMinDailyPhotosForDir, "Minimum number of photos per day to create a new directory")
+	flag.IntVar(&minDailyPhotosForEvent, "min-photos-per-day-for-event-to-create-new-dir", defaultMinDailyPhotosForEvent, "Minimum number of photos per day for an event to create a new directory")
+	flag.IntVar(&minDailyPhotosForEvent, "min-photos-per-day-for-event-to-create-new-dir", defaultMinDailyPhotosForEvent, "Minimum number of photos per day for an event to create a new directory")
 
 	if flagDryRun {
 		log.Println("Running in Dry-Run mode. No files will be modified.")

@@ -3,6 +3,9 @@ package main
 const (
 	defaultDirSrc = "E:\\DCIM\\100MSDCF"
 	defaultDirDst = "D:\\raw"
+
+	defaultMinDailyPhotosForDir = 700
+	defaultMinDailyPhotosForEvent = 300
 )
 
 var (
