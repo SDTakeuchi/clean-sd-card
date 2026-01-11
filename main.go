@@ -18,12 +18,14 @@ func main() {
 		flagDryRun, flagOverwrite, flagDeleteZombieEditFiles bool
 		dirSrc, dirDst                                       string
 
-		// put pictures in a new directory when more than N pictures were taken in the same day.
-		minDailyPhotosForDir int
-		// minDailyPhotosForEvent is the threshold for detecting a multi-day shooting event.
-		// When 2 or more consecutive days each have N or more photos, all photos from
-		// those consecutive days are grouped together and moved into a new event directory.
-		minDailyPhotosForEvent int
+		/// folderCreationThresholdOneDay is the minimum number of photos taken on the same date
+		// required to create a separate folder for that date
+		folderCreationThresholdOneDay int
+
+		// folderCreationThresholdConsecutiveDays is the minimum number of consecutive days
+		// where photo count exceeds folderCreationThresholdOneDay required to create
+		// a separate folder grouping those days together
+		folderCreationThresholdConsecutiveDays int
 	)
 
 	flag.BoolVar(&flagDryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
@@ -31,9 +33,8 @@ func main() {
 	flag.BoolVar(&flagDeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
-	flag.IntVar(&minDailyPhotosForDir, "min-photos-per-day-to-create-new-dir", defaultMinDailyPhotosForDir, "Minimum number of photos per day to create a new directory")
-	flag.IntVar(&minDailyPhotosForEvent, "min-photos-per-day-for-event-to-create-new-dir", defaultMinDailyPhotosForEvent, "Minimum number of photos per day for an event to create a new directory")
-	flag.IntVar(&minDailyPhotosForEvent, "min-photos-per-day-for-event-to-create-new-dir", defaultMinDailyPhotosForEvent, "Minimum number of photos per day for an event to create a new directory")
+	flag.IntVar(&folderCreationThresholdOneDay, "folder-creation-threshold-one-day", defaultFolderCreationThresholdOneDay, "Threshold for creating a new directory in one day")
+	flag.IntVar(&folderCreationThresholdConsecutiveDays, "folder-creation-threshold-consecutive-days", defaultFolderCreationThresholdConsecutiveDays, "Threshold for creating a new directory in consecutive days")
 
 	if flagDryRun {
 		log.Println("Running in Dry-Run mode. No files will be modified.")
@@ -44,7 +45,7 @@ func main() {
 		log.Println("Running in Skip-Existing mode. Existing files in destination will be skipped.")
 	}
 
-	totalCopied, removedCount, err := cleanSDCard(EditFileExtensions, ExtensionsToCopy, dirSrc, dirDst, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles)
+	totalCopied, removedCount, err := cleanSDCard(EditFileExtensions, ExtensionsToCopy, dirSrc, dirDst, folderCreationThresholdOneDay, folderCreationThresholdConsecutiveDays, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles)
 	if err != nil {
 		log.Fatalf("Error cleaning SD card: %s", err.Error())
 	}
@@ -54,7 +55,7 @@ func main() {
 
 // cleanSDCard copies files from dirSrc to dirDst and removes files from dirSrc.
 // It returns the number of files copied, the number of files removed, and any error.
-func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst string, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles bool) (int, int, error) {
+func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst string, folderCreationThresholdOneDay int, folderCreationThresholdConsecutiveDays int, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles bool) (int, int, error) {
 	if !flagDryRun {
 		if err := os.MkdirAll(dirDst, 0755); err != nil {
 			return 0, 0, fmt.Errorf("creating destination directory: %w", err)
@@ -63,7 +64,7 @@ func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst s
 
 	totalCopied := 0
 	for _, ext := range extensionsToCopy {
-		n, err := copyFiles(dirSrc, dirDst, ext, flagDryRun, flagOverwrite)
+		n, err := copyFiles(dirSrc, dirDst, ext, folderCreationThresholdOneDay, folderCreationThresholdConsecutiveDays, flagDryRun, flagOverwrite)
 		if err != nil {
 			return totalCopied, 0, fmt.Errorf("processing .%s files (copied %d): %w", ext, n, err)
 		}

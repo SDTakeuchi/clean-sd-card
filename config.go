@@ -4,8 +4,10 @@ const (
 	defaultDirSrc = "E:\\DCIM\\100MSDCF"
 	defaultDirDst = "D:\\raw"
 
-	defaultMinDailyPhotosForDir = 700
-	defaultMinDailyPhotosForEvent = 300
+	defaultFolderCreationThresholdOneDay          = 600
+	defaultFolderCreationThresholdConsecutiveDays = 300
+
+	dateFormat = "200601-02"
 )
 
 var (
