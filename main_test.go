@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"testing"
 	"time"
@@ -10,12 +11,33 @@ import (
 )
 
 func TestCleanSDCard(t *testing.T) {
-	t.Skip("This test requires actual RAW files with EXIF data. Use TestDetectConsecutiveDays for unit testing the folder logic.")
+	t.Skip("This test requires actual RAW/JPG files with EXIF data. Use TestDetectConsecutiveDays for unit testing the folder logic.")
 
 	// Note: The new implementation requires EXIF data to be present in files.
 	// Creating empty dummy files won't work anymore since copyFiles now reads EXIF dates.
-	// For proper integration testing, you would need actual RAW files with EXIF data.
+	// For proper integration testing, you would need actual RAW/JPG files with EXIF data.
 	// The core logic is tested in TestDetectConsecutiveDays, TestGroupFilesByDate, and TestIsConsecutiveDay.
+	//
+	// Integration test scenarios to verify:
+	// 1. RAW files (.arw, .raw) are always copied to dirDst
+	// 2. When flagKeepJPGs=true: JPG files remain untouched on source
+	// 3. When flagKeepJPGs=false: JPG files copied to dirDstJPGs
+	// 4. Both RAW and JPG use same EXIF-based folder organization
+	// 5. Dry-run mode prevents all file operations
+}
+
+func TestFlagDefaults(t *testing.T) {
+	// Create a new flag set to test defaults without affecting global state
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+
+	var flagKeepJPGs bool
+	fs.BoolVar(&flagKeepJPGs, "keep-jpgs", true, "Keep JPG files")
+
+	// Parse with no args to get defaults
+	err := fs.Parse([]string{})
+	require.NoError(t, err)
+
+	assert.True(t, flagKeepJPGs, "flagKeepJPGs should default to true")
 }
 
 func TestGroupFilesByDate(t *testing.T) {

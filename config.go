@@ -1,8 +1,9 @@
 package main
 
 const (
-	defaultDirSrc = "E:\\DCIM\\100MSDCF"
-	defaultDirDst = "D:\\raw"
+	defaultDirSrc     = "E:\\DCIM\\100MSDCF"
+	defaultDirDst     = "D:\\raw"
+	defaultDirDstJPGs = "D:\\jpg"
 
 	defaultFolderCreationThresholdOneDay          = 600
 	defaultFolderCreationThresholdConsecutiveDays = 300
@@ -16,4 +17,7 @@ var (
 
 	// ExtensionsToCopy contains raw file extensions to copy from SD card
 	ExtensionsToCopy = []string{"arw", "raw"}
+
+	// ExtensionsJPG contains JPG file extensions to optionally copy
+	ExtensionsJPG = []string{"jpg", "jpeg", "JPG", "JPEG"}
 )
