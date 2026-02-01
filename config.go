@@ -5,10 +5,8 @@ const (
 	defaultDirDst     = "D:\\raw"
 	defaultDirDstJPGs = "D:\\jpg"
 
-	defaultFolderCreationThresholdOneDay          = 600
-	defaultFolderCreationThresholdConsecutiveDays = 300
-
-	dateFormat = "200601-02"
+	defaultMinDailyPhotosForDir = 700
+	defaultMinDailyPhotosForEvent = 300
 )
 
 var (
