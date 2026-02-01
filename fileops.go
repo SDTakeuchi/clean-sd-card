@@ -106,34 +106,31 @@ func copyFiles(srcDir, dstDir, ext string, folderCreationThresholdOneDay, folder
 		}
 
 		for _, fileName := range group.files {
-			wg.Add(1)
-			go func(name, destDir string) {
-				defer wg.Done()
-
-				srcPath := filepath.Join(srcDir, name)
-				dstPath := filepath.Join(destDir, name)
+			wg.Go(func() {
+				srcPath := filepath.Join(srcDir, fileName)
+				dstPath := filepath.Join(actualDestDir, fileName)
 
 				if !flagOverwrite {
 					if _, statErr := os.Stat(dstPath); statErr == nil {
-						log.Printf("Skipping copying existing file: %s\n", name)
+						log.Printf("Skipping copying existing file: %s\n", fileName)
 						return
 					}
 				}
 
 				if flagDryRun {
-					log.Printf("[DryRun] Would copy %s to %s\n", name, destDir)
+					log.Printf("[DryRun] Would copy %s to %s\n", fileName, actualDestDir)
 					count.Add(1)
 					return
 				}
 
 				if copyErr := copyFile(srcPath, dstPath); copyErr != nil {
-					errsChan <- fileCopyError{fileName: name, err: copyErr}
+					errsChan <- fileCopyError{fileName: fileName, err: copyErr}
 					return
 				}
 
-				log.Printf("Copied %s to %s\n", name, destDir)
+				log.Printf("Copied %s to %s\n", fileName, actualDestDir)
 				count.Add(1)
-			}(fileName, actualDestDir)
+			})
 		}
 	}
 
@@ -299,11 +296,12 @@ func removeFiles(dir string) (int, error) {
 		}
 
 		path := filepath.Join(dir, entry.Name())
-		if err := os.Remove(path); err != nil {
+		if err = os.Remove(path); err != nil {
 			return count, err
 		}
 		log.Printf("Removed %s\n", entry.Name())
 		count++
 	}
+
 	return count, nil
 }

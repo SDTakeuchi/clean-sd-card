@@ -98,7 +98,7 @@ func cleanSDCard(editFileExtensions, extensionsToCopy, extensionsJPG []string, d
 	if !flagKeepJPGs {
 		if !flagDryRun {
 			if err := os.MkdirAll(dirDstJPGs, 0755); err != nil {
-				return totalCopied, 0, fmt.Errorf("creating JPG destination directory: %w", err)
+				return totalCopied, 0, fmt.Errorf("failed to create JPG destination directory: %w", err)
 			}
 		}
 
