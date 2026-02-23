@@ -22,18 +22,25 @@ import (
 const (
 	defaultDirSrc = "E:\\DCIM\\100MSDCF"
 	defaultDirDst = "D:\\raw"
+
+	defaultDirDstJPG = "D:\\jpg"
 )
 
 func main() {
 	var (
-		editFileExtensions                                   = []string{"xmp"} // lightroom's default edit file extension when edited in local machine
-		extensionsToCopy                                     = []string{"arw", "raw"}
-		flagDryRun, flagOverwrite, flagDeleteZombieEditFiles bool
-		dirSrc, dirDst                                       string
+		editFileExtensions        = []string{"xmp"} // lightroom's default edit file extension when edited in local machine
+		extensionsToCopy          = []string{"arw", "raw"}
+		extensionsJPG             = []string{"jpg", "jpeg"}
+		flagDryRun                bool
+		flagKeepJPG               bool
+		flagOverwrite             bool
+		flagDeleteZombieEditFiles bool
+		dirSrc, dirDst            string
 	)
 
 	flag.BoolVar(&flagDryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
 	flag.BoolVar(&flagOverwrite, "overwrite", false, "Overwrite existing files in destination (default: false)")
+	flag.BoolVar(&flagKeepJPG, "keep-jpg", true, "Keep JPG files in destination (default: true)")
 	flag.BoolVar(&flagDeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
@@ -49,7 +56,17 @@ func main() {
 		log.Println("Running in Skip-Existing mode. Existing files in destination will be skipped.")
 	}
 
-	totalCopied, removedCount, err := cleanSDCard(editFileExtensions, extensionsToCopy, dirSrc, dirDst, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles)
+	totalCopied, removedCount, err := cleanSDCard(
+		editFileExtensions,
+		extensionsToCopy,
+		extensionsJPG,
+		dirSrc,
+		dirDst,
+		flagDryRun,
+		flagKeepJPG,
+		flagOverwrite,
+		flagDeleteZombieEditFiles,
+	)
 	if err != nil {
 		log.Fatalf("failed cleaning SD card: %s", err.Error())
 	}
@@ -59,13 +76,18 @@ func main() {
 
 // cleanSDCard copies files from dirSrc to dirDst and removes files from dirSrc.
 // It returns the number of files copied, the number of files removed, and any error.
-func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst string, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles bool) (int, int, error) {
+func cleanSDCard(
+	editFileExtensions, extensionsToCopy, extensionsJPG []string,
+	dirSrc, dirDst string,
+	flagDryRun, flagKeepJPG, flagOverwrite, flagDeleteZombieEditFiles bool,
+) (int, int, error) {
 	if !flagDryRun {
 		if err := os.MkdirAll(dirDst, 0755); err != nil {
 			return 0, 0, fmt.Errorf("failed to create destination directory: %w", err)
 		}
 	}
 
+	// copy raw files
 	totalCopied := 0
 	for _, ext := range extensionsToCopy {
 		n, err := copyFiles(dirSrc, dirDst, ext, flagDryRun, flagOverwrite)
@@ -75,6 +97,39 @@ func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst s
 		totalCopied += n
 	}
 
+	// copy jpg
+	var countJPGToCopy int
+	if flagKeepJPG {
+		if flagDryRun {
+			var countErr error
+			// just count jpg files without copying
+			for _, ext := range extensionsJPG {
+				c, err := countFilesWithExtension(dirSrc, ext)
+				if err != nil {
+					countErr = errors.Join(countErr, err)
+					continue
+				}
+				countJPGToCopy += c
+			}
+			if countErr != nil {
+				log.Printf("[WARN] failed to count jpg files: %s", countErr.Error())
+			} else {
+				log.Printf("[dry-run] would copy %d JPG files\n", countJPGToCopy)
+			}
+		} else {
+			for _, ext := range extensionsJPG {
+				n, err := copyFiles(dirSrc, defaultDirDstJPG, ext, flagDryRun, flagOverwrite)
+				if err != nil {
+					return 0, 0, fmt.Errorf("failed to copy .%s files to %s (copied %d): %w", ext, defaultDirDstJPG, n, err)
+				}
+				countJPGToCopy += n
+			}
+			log.Printf("copied %d JPG files to %s\n", countJPGToCopy, defaultDirDstJPG)
+			totalCopied += countJPGToCopy
+		}
+	}
+
+	// remove source files
 	removedCount := 0
 	if !flagDryRun {
 		var err error
@@ -84,6 +139,7 @@ func cleanSDCard(editFileExtensions, extensionsToCopy []string, dirSrc, dirDst s
 		}
 	}
 
+	// delete zombie edit files
 	if !flagDryRun && flagDeleteZombieEditFiles {
 		for _, editFileExtension := range editFileExtensions {
 			count, err := deleteZombieEditFiles(editFileExtension, dirDst, extensionsToCopy, true)
@@ -295,4 +351,23 @@ func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []st
 	}
 
 	return int(count.Load()), err
+}
+
+func countFilesWithExtension(dir, ext string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read directory %s: %w", dir, err)
+	}
+
+	var count atomic.Uint32
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.EqualFold(filepath.Ext(entry.Name()), "."+ext) {
+			count.Add(1)
+		}
+	}
+
+	return int(count.Load()), nil
 }
