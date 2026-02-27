@@ -18,9 +18,11 @@ func TestCleanSDCard(t *testing.T) {
 	dirDst := filepath.Join(dirTest, "dst")
 	editFileExtensions := []string{"xmp"}
 	extensionsToCopy := []string{"raw"}
+	extensionsJPG := []string{"jpg"}
 	flagDryRun := false
 	flagOverwrite := false
 	flagDeleteZombieEditFiles := false
+	flagKeepJPG := false
 
 	fileCount := 30
 
@@ -40,7 +42,17 @@ func TestCleanSDCard(t *testing.T) {
 		}
 	}
 
-	totalCopied, removedCount, err := cleanSDCard(editFileExtensions, extensionsToCopy, dirSrc, dirDst, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles)
+	totalCopied, removedCount, err := cleanSDCard(
+		editFileExtensions,
+		extensionsToCopy,
+		extensionsJPG,
+		dirSrc,
+		dirDst,
+		flagDryRun,
+		flagKeepJPG,
+		flagOverwrite,
+		flagDeleteZombieEditFiles,
+	)
 
 	assert.NoError(t, err)
 	assert.Equal(t, fileCount, totalCopied)
@@ -240,5 +252,29 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(entries))
 		assert.Equal(t, "sub_zombie.xmp", entries[0].Name())
+	})
+}
+
+func TestCopyFilesDeadlock(t *testing.T) {
+	t.Run("does not deadlock when a copy error occurs", func(t *testing.T) {
+		dirSrc := t.TempDir()
+		dirDst := t.TempDir()
+
+		// Create a source file
+		srcFilePath := filepath.Join(dirSrc, "file1.txt")
+		err := os.WriteFile(srcFilePath, []byte("hello"), 0644)
+		require.NoError(t, err)
+
+		// Create a directory in the destination with the same name as the source file
+		// This will cause os.Create(dstPath) in copyFile to fail.
+		err = os.Mkdir(filepath.Join(dirDst, "file1.txt"), 0755)
+		require.NoError(t, err)
+
+		// This call would hang if the deadlock is present.
+		// We expect it to complete with an error.
+		count, err := copyFiles(dirSrc, dirDst, "txt", false, true)
+
+		assert.Error(t, err)
+		assert.Equal(t, 0, count)
 	})
 }

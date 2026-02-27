@@ -214,11 +214,10 @@ func copyFiles(srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int,
 	}
 
 	wg.Wait()
+	close(errsChan)
 
-	if len(errsChan) > 0 {
-		for e := range errsChan {
-			err = errors.Join(err, e)
-		}
+	for e := range errsChan {
+		err = errors.Join(err, e)
 	}
 
 	return int(count.Load()), err
@@ -271,11 +270,10 @@ func removeFiles(dir string) (int, error) {
 	}
 
 	wg.Wait()
+	close(errsChan)
 
-	if len(errsChan) > 0 {
-		for e := range errsChan {
-			err = errors.Join(err, e)
-		}
+	for e := range errsChan {
+		err = errors.Join(err, e)
 	}
 
 	return int(count.Load()), err
@@ -343,11 +341,10 @@ func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []st
 	}
 
 	wg.Wait()
+	close(errsChan)
 
-	if len(errsChan) > 0 {
-		for e := range errsChan {
-			err = errors.Join(err, e)
-		}
+	for e := range errsChan {
+		err = errors.Join(err, e)
 	}
 
 	return int(count.Load()), err
