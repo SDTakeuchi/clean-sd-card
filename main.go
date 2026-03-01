@@ -23,7 +23,7 @@ const (
 	defaultDirSrc = "E:\\DCIM\\100MSDCF"
 	defaultDirDst = "D:\\raw"
 
-	defaultDirDstJPG = "D:\\jpg"
+	defaultDirDstJPG = "D:\\jpeg"
 )
 
 func main() {
