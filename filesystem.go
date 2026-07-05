@@ -68,15 +68,25 @@ func (e fileCopyError) Error() string {
 	return fmt.Sprintf("failed to copy file %s: %s", e.fileName, e.err.Error())
 }
 
-// forEachEntryConcurrently runs fn concurrently for each entry, aggregating
-// the increments fn reports and any errors it returns.
-func forEachEntryConcurrently(entries []os.DirEntry, fn func(entry os.DirEntry) (int, error)) (int, error) {
+// forEachEntryConcurrently runs fn for each entry, aggregating the increments
+// fn reports and any errors it returns. At most maxConcurrency invocations of
+// fn run at once (values <= 0 are treated as 1), so callers touching a
+// bottlenecked device (e.g. an SD card) can bound how many concurrent
+// operations hit it instead of spawning one goroutine per entry.
+func forEachEntryConcurrently(entries []os.DirEntry, maxConcurrency int, fn func(entry os.DirEntry) (int, error)) (int, error) {
+	if maxConcurrency <= 0 {
+		maxConcurrency = 1
+	}
+
 	var count atomic.Int32
 	var wg sync.WaitGroup
 	errsChan := make(chan error, len(entries))
+	sem := make(chan struct{}, maxConcurrency)
 
 	for _, entry := range entries {
+		sem <- struct{}{}
 		wg.Go(func() {
+			defer func() { <-sem }()
 			n, err := fn(entry)
 			if err != nil {
 				errsChan <- err
@@ -112,12 +122,12 @@ func matchesAnyExtension(name string, exts []string) bool {
 // entries is a directory listing of srcDir supplied by the caller so that a
 // single srcDir listing can be shared across multiple extension groups
 // instead of re-reading the (potentially slow, e.g. SD card) source directory
-// once per group.
+// once per group. At most maxConcurrency files are copied at once.
 // If flagDryRun is true, it counts files without copying.
 // If flagOverwrite is true, it overwrites existing files in dstDir.
 // It returns the number of files copied and any error.
-func copyFiles(fsys FileSystem, entries []os.DirEntry, srcDir, dstDir string, exts []string, flagDryRun, flagOverwrite bool) (int, error) {
-	return forEachEntryConcurrently(entries, func(entry os.DirEntry) (int, error) {
+func copyFiles(fsys FileSystem, entries []os.DirEntry, srcDir, dstDir string, exts []string, flagDryRun, flagOverwrite bool, maxConcurrency int) (int, error) {
+	return forEachEntryConcurrently(entries, maxConcurrency, func(entry os.DirEntry) (int, error) {
 		if entry.IsDir() {
 			return 0, nil
 		}
@@ -152,10 +162,11 @@ func copyFiles(fsys FileSystem, entries []os.DirEntry, srcDir, dstDir string, ex
 }
 
 // removeFiles removes all files in entries, a directory listing of dir
-// supplied by the caller (see copyFiles).
+// supplied by the caller (see copyFiles). At most maxConcurrency files are
+// removed at once.
 // It returns the number of files removed and any error.
-func removeFiles(fsys FileSystem, entries []os.DirEntry, dir string) (int, error) {
-	return forEachEntryConcurrently(entries, func(entry os.DirEntry) (int, error) {
+func removeFiles(fsys FileSystem, entries []os.DirEntry, dir string, maxConcurrency int) (int, error) {
+	return forEachEntryConcurrently(entries, maxConcurrency, func(entry os.DirEntry) (int, error) {
 		if entry.IsDir() {
 			return 0, nil
 		}
@@ -171,20 +182,21 @@ func removeFiles(fsys FileSystem, entries []os.DirEntry, dir string) (int, error
 
 // deleteZombieEditFiles deletes edit files that have no corresponding raw file.
 // It checks for raw files with extensions in rawFileExtensions.
-// If isRecursive is true, it processes subdirectories recursively.
+// If isRecursive is true, it processes subdirectories recursively. At most
+// maxConcurrency entries are processed at once per directory level.
 // It returns the number of files deleted and any error.
-func deleteZombieEditFiles(fsys FileSystem, editFileExtension, dir string, rawFileExtensions []string, isRecursive bool) (int, error) {
+func deleteZombieEditFiles(fsys FileSystem, editFileExtension, dir string, rawFileExtensions []string, isRecursive bool, maxConcurrency int) (int, error) {
 	entries, err := fsys.ReadDir(dir)
 	if err != nil {
 		return 0, fmt.Errorf("reading directory: %w", err)
 	}
 
-	return forEachEntryConcurrently(entries, func(entry os.DirEntry) (int, error) {
+	return forEachEntryConcurrently(entries, maxConcurrency, func(entry os.DirEntry) (int, error) {
 		if entry.IsDir() {
 			if !isRecursive {
 				return 0, nil
 			}
-			n, err := deleteZombieEditFiles(fsys, editFileExtension, filepath.Join(dir, entry.Name()), rawFileExtensions, isRecursive)
+			n, err := deleteZombieEditFiles(fsys, editFileExtension, filepath.Join(dir, entry.Name()), rawFileExtensions, isRecursive, maxConcurrency)
 			if err != nil {
 				return 0, fmt.Errorf("failed to process subdirectory %s: %w", entry.Name(), err)
 			}

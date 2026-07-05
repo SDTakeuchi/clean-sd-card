@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testConcurrency = 4
+
 func TestCleanSDCard(t *testing.T) {
 	fsys := newFakeFileSystem()
 	dirSrc := "src"
@@ -24,6 +26,7 @@ func TestCleanSDCard(t *testing.T) {
 		DeleteZombieEditFiles: false,
 		KeepJPG:               false,
 		KeepSrc:               false,
+		Concurrency:           testConcurrency,
 	}
 
 	fileCount := 30
@@ -84,7 +87,7 @@ func TestCleanSDCardReadsSourceDirOnce(t *testing.T) {
 		dirSrc,
 		dirDst,
 		dirDstJPG,
-		Options{KeepJPG: true, DeleteZombieEditFiles: false},
+		Options{KeepJPG: true, DeleteZombieEditFiles: false, Concurrency: testConcurrency},
 	)
 
 	assert.NoError(t, err)
@@ -100,7 +103,7 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 			fsys.addFile(fmt.Sprintf("photo%d.xmp", i+1), "")
 		}
 
-		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false, testConcurrency)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 3, count)
@@ -122,7 +125,7 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 		fsys.addFile("photo2.xmp", "")
 		fsys.addFile("photo2.raw", "")
 
-		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false, testConcurrency)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
@@ -144,7 +147,7 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 		fsys.addFile("zombie1.xmp", "")
 		fsys.addFile("zombie2.xmp", "")
 
-		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false, testConcurrency)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 2, count)
@@ -167,7 +170,7 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 		fsys.addFile("photo.jpg", "")
 		fsys.addFile("photo.png", "")
 
-		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false, testConcurrency)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
@@ -181,7 +184,7 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 	t.Run("handles empty directory", func(t *testing.T) {
 		fsys := newFakeFileSystem()
 
-		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false, testConcurrency)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
@@ -190,7 +193,7 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 	t.Run("returns error for non-existent directory", func(t *testing.T) {
 		fsys := newFakeFileSystem()
 
-		count, err := deleteZombieEditFiles(fsys, "xmp", "/non/existent/path", []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", "/non/existent/path", []string{"arw", "raw"}, false, testConcurrency)
 
 		assert.Error(t, err)
 		assert.Equal(t, 0, count)
@@ -211,7 +214,7 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 		fsys.addFile(filepath.Join(subDir, "valid.xmp"), "")
 		fsys.addFile(filepath.Join(subDir, "valid.arw"), "")
 
-		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, true)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, true, testConcurrency)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 2, count) // root_zombie.xmp + sub_zombie.xmp
@@ -237,7 +240,7 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 		// Create zombie edit file in subdirectory
 		fsys.addFile(filepath.Join(subDir, "sub_zombie.xmp"), "")
 
-		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false, testConcurrency)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 1, count) // only root_zombie.xmp
@@ -271,7 +274,7 @@ func TestCopyFilesDeadlock(t *testing.T) {
 
 		// This call would hang if the deadlock is present.
 		// We expect it to complete with an error.
-		count, err := copyFiles(fsys, entries, dirSrc, dirDst, []string{"txt"}, false, true)
+		count, err := copyFiles(fsys, entries, dirSrc, dirDst, []string{"txt"}, false, true, testConcurrency)
 
 		assert.Error(t, err)
 		assert.Equal(t, 0, count)
