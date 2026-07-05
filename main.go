@@ -37,11 +37,11 @@ type Options struct {
 
 func main() {
 	var (
-		editFileExtensions = []string{"xmp"} // lightroom's default edit file extension when edited in local machine
-		extensionsToCopy   = []string{"arw", "raw"}
-		extensionsJPG      = []string{"jpg", "jpeg"}
-		opts               Options
-		dirSrc, dirDst     string
+		editFileExtensions        = []string{"xmp"} // lightroom's default edit file extension when edited in local machine
+		extensionsToCopy          = []string{"arw", "raw"}
+		extensionsJPG             = []string{"jpg", "jpeg"}
+		opts                      Options
+		dirSrc, dirDst, dirDstJPG string
 	)
 
 	flag.BoolVar(&opts.DryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
@@ -51,6 +51,7 @@ func main() {
 	flag.BoolVar(&opts.DeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
+	flag.StringVar(&dirDstJPG, "dst-jpg", defaultDirDstJPG, "Destination directory for JPG files")
 	flag.Parse()
 
 	log.Printf("Starting copying files from %s to %s with extensions %v\n", dirSrc, dirDst, extensionsToCopy)
@@ -72,6 +73,7 @@ func main() {
 		extensionsJPG,
 		dirSrc,
 		dirDst,
+		dirDstJPG,
 		opts,
 	)
 	if err != nil {
@@ -85,7 +87,7 @@ func main() {
 // It returns the number of files copied, the number of files removed, and any error.
 func cleanSDCard(
 	editFileExtensions, extensionsToCopy, extensionsJPG []string,
-	dirSrc, dirDst string,
+	dirSrc, dirDst, dirDstJPG string,
 	opts Options,
 ) (int, int, error) {
 	if !opts.DryRun {
@@ -108,16 +110,16 @@ func cleanSDCard(
 	if opts.KeepJPG {
 		var countJPGToCopy int
 		for _, ext := range extensionsJPG {
-			n, err := copyFiles(dirSrc, defaultDirDstJPG, ext, opts.DryRun, opts.Overwrite)
+			n, err := copyFiles(dirSrc, dirDstJPG, ext, opts.DryRun, opts.Overwrite)
 			if err != nil {
-				return 0, 0, fmt.Errorf("failed to copy .%s files to %s (copied %d): %w", ext, defaultDirDstJPG, n, err)
+				return 0, 0, fmt.Errorf("failed to copy .%s files to %s (copied %d): %w", ext, dirDstJPG, n, err)
 			}
 			countJPGToCopy += n
 		}
 		if opts.DryRun {
 			log.Printf("[dry-run] would copy %d JPG files\n", countJPGToCopy)
 		} else {
-			log.Printf("copied %d JPG files to %s\n", countJPGToCopy, defaultDirDstJPG)
+			log.Printf("copied %d JPG files to %s\n", countJPGToCopy, dirDstJPG)
 		}
 		totalCopied += countJPGToCopy
 	}
