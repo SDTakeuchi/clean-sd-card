@@ -19,11 +19,13 @@ func TestCleanSDCard(t *testing.T) {
 	editFileExtensions := []string{"xmp"}
 	extensionsToCopy := []string{"raw"}
 	extensionsJPG := []string{"jpg"}
-	flagDryRun := false
-	flagOverwrite := false
-	flagDeleteZombieEditFiles := false
-	flagKeepJPG := false
-	flagKeepSrc := false
+	opts := Options{
+		DryRun:                false,
+		Overwrite:             false,
+		DeleteZombieEditFiles: false,
+		KeepJPG:               false,
+		KeepSrc:               false,
+	}
 
 	fileCount := 30
 
@@ -49,11 +51,7 @@ func TestCleanSDCard(t *testing.T) {
 		extensionsJPG,
 		dirSrc,
 		dirDst,
-		flagDryRun,
-		flagKeepJPG,
-		flagKeepSrc,
-		flagOverwrite,
-		flagDeleteZombieEditFiles,
+		opts,
 	)
 
 	assert.NoError(t, err)

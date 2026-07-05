@@ -26,38 +26,43 @@ const (
 	defaultDirDstJPG = "D:\\jpeg"
 )
 
+// Options holds the flags that control cleanSDCard's behavior.
+type Options struct {
+	DryRun                bool
+	KeepJPG               bool
+	KeepSrc               bool
+	Overwrite             bool
+	DeleteZombieEditFiles bool
+}
+
 func main() {
 	var (
-		editFileExtensions        = []string{"xmp"} // lightroom's default edit file extension when edited in local machine
-		extensionsToCopy          = []string{"arw", "raw"}
-		extensionsJPG             = []string{"jpg", "jpeg"}
-		flagDryRun                bool
-		flagKeepJPG               bool
-		flagKeepSrc               bool
-		flagOverwrite             bool
-		flagDeleteZombieEditFiles bool
-		dirSrc, dirDst            string
+		editFileExtensions = []string{"xmp"} // lightroom's default edit file extension when edited in local machine
+		extensionsToCopy   = []string{"arw", "raw"}
+		extensionsJPG      = []string{"jpg", "jpeg"}
+		opts               Options
+		dirSrc, dirDst     string
 	)
 
-	flag.BoolVar(&flagDryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
-	flag.BoolVar(&flagOverwrite, "overwrite", false, "Overwrite existing files in destination (default: false)")
-	flag.BoolVar(&flagKeepJPG, "keep-jpg", true, "Keep JPG files in destination (default: true)")
-	flag.BoolVar(&flagKeepSrc, "keep-src", false, "Keep files in the source (SD card) directory after copying instead of removing them (default: false)")
-	flag.BoolVar(&flagDeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
+	flag.BoolVar(&opts.DryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
+	flag.BoolVar(&opts.Overwrite, "overwrite", false, "Overwrite existing files in destination (default: false)")
+	flag.BoolVar(&opts.KeepJPG, "keep-jpg", true, "Keep JPG files in destination (default: true)")
+	flag.BoolVar(&opts.KeepSrc, "keep-src", false, "Keep files in the source (SD card) directory after copying instead of removing them (default: false)")
+	flag.BoolVar(&opts.DeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
 	flag.Parse()
 
 	log.Printf("Starting copying files from %s to %s with extensions %v\n", dirSrc, dirDst, extensionsToCopy)
-	if flagDryRun {
+	if opts.DryRun {
 		log.Println("Running in Dry-Run mode. No files will be modified.")
 	}
-	if flagOverwrite {
+	if opts.Overwrite {
 		log.Println("Running in Overwrite mode. Existing files in destination will be overwritten.")
 	} else {
 		log.Println("Running in Skip-Existing mode. Existing files in destination will be skipped.")
 	}
-	if flagKeepSrc {
+	if opts.KeepSrc {
 		log.Println("Running in Keep-Src mode. Files in the source directory will not be removed.")
 	}
 
@@ -67,11 +72,7 @@ func main() {
 		extensionsJPG,
 		dirSrc,
 		dirDst,
-		flagDryRun,
-		flagKeepJPG,
-		flagKeepSrc,
-		flagOverwrite,
-		flagDeleteZombieEditFiles,
+		opts,
 	)
 	if err != nil {
 		log.Fatalf("failed cleaning SD card: %s", err.Error())
@@ -85,9 +86,9 @@ func main() {
 func cleanSDCard(
 	editFileExtensions, extensionsToCopy, extensionsJPG []string,
 	dirSrc, dirDst string,
-	flagDryRun, flagKeepJPG, flagKeepSrc, flagOverwrite, flagDeleteZombieEditFiles bool,
+	opts Options,
 ) (int, int, error) {
-	if !flagDryRun {
+	if !opts.DryRun {
 		if err := os.MkdirAll(dirDst, 0755); err != nil {
 			return 0, 0, fmt.Errorf("failed to create destination directory: %w", err)
 		}
@@ -96,7 +97,7 @@ func cleanSDCard(
 	// copy raw files
 	totalCopied := 0
 	for _, ext := range extensionsToCopy {
-		n, err := copyFiles(dirSrc, dirDst, ext, flagDryRun, flagOverwrite)
+		n, err := copyFiles(dirSrc, dirDst, ext, opts.DryRun, opts.Overwrite)
 		if err != nil {
 			return totalCopied, 0, fmt.Errorf("failed to copy .%s files (copied %d): %w", ext, n, err)
 		}
@@ -105,8 +106,8 @@ func cleanSDCard(
 
 	// copy jpg
 	var countJPGToCopy int
-	if flagKeepJPG {
-		if flagDryRun {
+	if opts.KeepJPG {
+		if opts.DryRun {
 			var countErr error
 			// just count jpg files without copying
 			for _, ext := range extensionsJPG {
@@ -124,7 +125,7 @@ func cleanSDCard(
 			}
 		} else {
 			for _, ext := range extensionsJPG {
-				n, err := copyFiles(dirSrc, defaultDirDstJPG, ext, flagDryRun, flagOverwrite)
+				n, err := copyFiles(dirSrc, defaultDirDstJPG, ext, opts.DryRun, opts.Overwrite)
 				if err != nil {
 					return 0, 0, fmt.Errorf("failed to copy .%s files to %s (copied %d): %w", ext, defaultDirDstJPG, n, err)
 				}
@@ -137,7 +138,7 @@ func cleanSDCard(
 
 	// remove source files
 	removedCount := 0
-	if !flagDryRun && !flagKeepSrc {
+	if !opts.DryRun && !opts.KeepSrc {
 		var err error
 		removedCount, err = removeFiles(dirSrc)
 		if err != nil {
@@ -146,7 +147,7 @@ func cleanSDCard(
 	}
 
 	// delete zombie edit files
-	if !flagDryRun && flagDeleteZombieEditFiles {
+	if !opts.DryRun && opts.DeleteZombieEditFiles {
 		for _, editFileExtension := range editFileExtensions {
 			count, err := deleteZombieEditFiles(editFileExtension, dirDst, extensionsToCopy, true)
 			if err != nil {
