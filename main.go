@@ -2,21 +2,14 @@ package main
 
 // Sample usage:
 //
-//	go run main.go -dry-run
-//	go run main.go -overwrite
-//	go run main.go -dry-run -overwrite
+//	go run . -dry-run
+//	go run . -overwrite
+//	go run . -dry-run -overwrite
 
 import (
-	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync"
-	"sync/atomic"
 )
 
 const (
@@ -68,6 +61,7 @@ func main() {
 	}
 
 	totalCopied, removedCount, err := cleanSDCard(
+		osFileSystem{},
 		editFileExtensions,
 		extensionsToCopy,
 		extensionsJPG,
@@ -86,12 +80,13 @@ func main() {
 // cleanSDCard copies files from dirSrc to dirDst and removes files from dirSrc.
 // It returns the number of files copied, the number of files removed, and any error.
 func cleanSDCard(
+	fsys FileSystem,
 	editFileExtensions, extensionsToCopy, extensionsJPG []string,
 	dirSrc, dirDst, dirDstJPG string,
 	opts Options,
 ) (int, int, error) {
 	if !opts.DryRun {
-		if err := os.MkdirAll(dirDst, 0755); err != nil {
+		if err := fsys.MkdirAll(dirDst, 0755); err != nil {
 			return 0, 0, fmt.Errorf("failed to create destination directory: %w", err)
 		}
 	}
@@ -99,7 +94,7 @@ func cleanSDCard(
 	// copy raw files
 	totalCopied := 0
 	for _, ext := range extensionsToCopy {
-		n, err := copyFiles(dirSrc, dirDst, ext, opts.DryRun, opts.Overwrite)
+		n, err := copyFiles(fsys, dirSrc, dirDst, ext, opts.DryRun, opts.Overwrite)
 		if err != nil {
 			return totalCopied, 0, fmt.Errorf("failed to copy .%s files (copied %d): %w", ext, n, err)
 		}
@@ -110,7 +105,7 @@ func cleanSDCard(
 	if opts.KeepJPG {
 		var countJPGToCopy int
 		for _, ext := range extensionsJPG {
-			n, err := copyFiles(dirSrc, dirDstJPG, ext, opts.DryRun, opts.Overwrite)
+			n, err := copyFiles(fsys, dirSrc, dirDstJPG, ext, opts.DryRun, opts.Overwrite)
 			if err != nil {
 				return 0, 0, fmt.Errorf("failed to copy .%s files to %s (copied %d): %w", ext, dirDstJPG, n, err)
 			}
@@ -128,7 +123,7 @@ func cleanSDCard(
 	removedCount := 0
 	if !opts.DryRun && !opts.KeepSrc {
 		var err error
-		removedCount, err = removeFiles(dirSrc)
+		removedCount, err = removeFiles(fsys, dirSrc)
 		if err != nil {
 			return totalCopied, removedCount, fmt.Errorf("failed to remove source files: %w", err)
 		}
@@ -137,7 +132,7 @@ func cleanSDCard(
 	// delete zombie edit files
 	if !opts.DryRun && opts.DeleteZombieEditFiles {
 		for _, editFileExtension := range editFileExtensions {
-			count, err := deleteZombieEditFiles(editFileExtension, dirDst, extensionsToCopy, true)
+			count, err := deleteZombieEditFiles(fsys, editFileExtension, dirDst, extensionsToCopy, true)
 			if err != nil {
 				return totalCopied, removedCount, fmt.Errorf("failed to delete zombie edit files with extension %s: %w", editFileExtension, err)
 			}
@@ -146,173 +141,4 @@ func cleanSDCard(
 	}
 
 	return totalCopied, removedCount, nil
-}
-
-type fileCopyError struct {
-	fileName string
-	err      error
-}
-
-func (e fileCopyError) Error() string {
-	return fmt.Sprintf("failed to copy file %s: %s", e.fileName, e.err.Error())
-}
-
-// forEachEntryConcurrently runs fn concurrently for each entry, aggregating
-// the increments fn reports and any errors it returns.
-func forEachEntryConcurrently(entries []os.DirEntry, fn func(entry os.DirEntry) (int, error)) (int, error) {
-	var count atomic.Int32
-	var wg sync.WaitGroup
-	errsChan := make(chan error, len(entries))
-
-	for _, entry := range entries {
-		wg.Go(func() {
-			n, err := fn(entry)
-			if err != nil {
-				errsChan <- err
-				return
-			}
-			count.Add(int32(n))
-		})
-	}
-
-	wg.Wait()
-	close(errsChan)
-
-	var errs error
-	for e := range errsChan {
-		errs = errors.Join(errs, e)
-	}
-
-	return int(count.Load()), errs
-}
-
-// copyFiles copies files with the given extension from srcDir to dstDir.
-// If flagDryRun is true, it counts files without copying.
-// If flagOverwrite is true, it overwrites existing files in dstDir.
-// It returns the number of files copied and any error.
-func copyFiles(srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int, error) {
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		return 0, err
-	}
-
-	return forEachEntryConcurrently(entries, func(entry os.DirEntry) (int, error) {
-		if entry.IsDir() {
-			return 0, nil
-		}
-
-		name := entry.Name()
-		if !strings.EqualFold(filepath.Ext(name), "."+ext) {
-			return 0, nil
-		}
-
-		srcPath := filepath.Join(srcDir, name)
-		dstPath := filepath.Join(dstDir, name)
-
-		if !flagOverwrite {
-			if _, statErr := os.Stat(dstPath); statErr == nil {
-				log.Printf("skipping copying existing file: %s\n", name)
-				return 0, nil
-			}
-		}
-
-		if flagDryRun {
-			log.Printf("[dry-run] would copy %s\n", name)
-			return 1, nil
-		}
-
-		if copyErr := copyFile(srcPath, dstPath); copyErr != nil {
-			return 0, fileCopyError{fileName: name, err: copyErr}
-		}
-
-		log.Printf("copied %s\n", name)
-		return 1, nil
-	})
-}
-
-// copyFile copies a single file from src to dst.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
-}
-
-// removeFiles removes all files in the directory.
-// It returns the number of files removed and any error.
-func removeFiles(dir string) (int, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, err
-	}
-
-	return forEachEntryConcurrently(entries, func(entry os.DirEntry) (int, error) {
-		if entry.IsDir() {
-			return 0, nil
-		}
-
-		path := filepath.Join(dir, entry.Name())
-		if err := os.Remove(path); err != nil {
-			return 0, fmt.Errorf("failed to remove file %s: %w", entry.Name(), err)
-		}
-		log.Printf("removed %s\n", entry.Name())
-		return 1, nil
-	})
-}
-
-// deleteZombieEditFiles deletes edit files that have no corresponding raw file.
-// It checks for raw files with extensions in rawFileExtensions.
-// If isRecursive is true, it processes subdirectories recursively.
-// It returns the number of files deleted and any error.
-func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []string, isRecursive bool) (int, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, fmt.Errorf("reading directory: %w", err)
-	}
-
-	return forEachEntryConcurrently(entries, func(entry os.DirEntry) (int, error) {
-		if entry.IsDir() {
-			if !isRecursive {
-				return 0, nil
-			}
-			n, err := deleteZombieEditFiles(editFileExtension, filepath.Join(dir, entry.Name()), rawFileExtensions, isRecursive)
-			if err != nil {
-				return 0, fmt.Errorf("failed to process subdirectory %s: %w", entry.Name(), err)
-			}
-			return n, nil
-		}
-
-		editFileName := entry.Name()
-		if !strings.HasSuffix(editFileName, "."+editFileExtension) {
-			return 0, nil
-		}
-
-		editFileNameWithoutExt := strings.TrimSuffix(editFileName, "."+editFileExtension)
-
-		for _, rawFileExt := range rawFileExtensions {
-			expectedRawFileName := editFileNameWithoutExt + "." + rawFileExt
-			if _, err := os.Stat(filepath.Join(dir, expectedRawFileName)); err == nil {
-				return 0, nil
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return 0, fmt.Errorf("failed to check if %s exists: %w", expectedRawFileName, err)
-			}
-		}
-
-		if err := os.Remove(filepath.Join(dir, editFileName)); err != nil {
-			return 0, fmt.Errorf("failed to remove zombie edit file %s: %w", editFileName, err)
-		}
-
-		log.Printf("removed zombie edit file: %s\n", editFileName)
-		return 1, nil
-	})
 }
