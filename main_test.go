@@ -10,13 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// creates dummy files in the current directory to test the behavior of the program
-
 func TestCleanSDCard(t *testing.T) {
-	dirTest := "test"
-	dirSrc := filepath.Join(dirTest, "src")
-	dirDst := filepath.Join(dirTest, "dst")
-	dirDstJPG := filepath.Join(dirTest, "dst-jpg")
+	fsys := newFakeFileSystem()
+	dirSrc := "src"
+	dirDst := "dst"
+	dirDstJPG := "dst-jpg"
 	editFileExtensions := []string{"xmp"}
 	extensionsToCopy := []string{"raw"}
 	extensionsJPG := []string{"jpg"}
@@ -29,24 +27,15 @@ func TestCleanSDCard(t *testing.T) {
 	}
 
 	fileCount := 30
-
-	defer func() {
-		if err := os.RemoveAll(dirTest); err != nil {
-			t.Errorf("failed to remove %s after test, delete the dir manually: %v", dirSrc, err)
-		}
-	}()
-
-	// create dummy files in src directory
-	err := os.MkdirAll(dirSrc, 0755)
-	require.NoError(t, err)
+	expectedFiles := make([]string, fileCount)
 	for i := range fileCount {
-		filePath := filepath.Join(dirSrc, fmt.Sprintf("file%d.%s", i+1, extensionsToCopy[0]))
-		if _, err := os.Create(filePath); err != nil {
-			require.NoError(t, err)
-		}
+		name := fmt.Sprintf("file%d.%s", i+1, extensionsToCopy[0])
+		fsys.addFile(filepath.Join(dirSrc, name), "content")
+		expectedFiles[i] = name
 	}
 
 	totalCopied, removedCount, err := cleanSDCard(
+		fsys,
 		editFileExtensions,
 		extensionsToCopy,
 		extensionsJPG,
@@ -60,7 +49,7 @@ func TestCleanSDCard(t *testing.T) {
 	assert.Equal(t, fileCount, totalCopied)
 	assert.Equal(t, fileCount, removedCount)
 
-	entries, err := os.ReadDir(dirDst)
+	entries, err := fsys.ReadDir(dirDst)
 	assert.NoError(t, err)
 	assert.Equal(t, fileCount, len(entries))
 
@@ -68,88 +57,73 @@ func TestCleanSDCard(t *testing.T) {
 	for i, entry := range entries {
 		copiedFiles[i] = entry.Name()
 	}
-
-	expectedFiles := make([]string, fileCount)
-	for i := range fileCount {
-		expectedFiles[i] = fmt.Sprintf("file%d.%s", i+1, extensionsToCopy[0])
-	}
-
 	assert.ElementsMatch(t, copiedFiles, expectedFiles)
 
-	entries, err = os.ReadDir(dirSrc)
+	entries, err = fsys.ReadDir(dirSrc)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, len(entries))
 }
 
 func TestDeleteZombieEditFiles(t *testing.T) {
 	t.Run("deletes zombie edit files when no corresponding raw file exists", func(t *testing.T) {
-		dirTest := t.TempDir()
+		fsys := newFakeFileSystem()
 
 		// Create zombie edit files (no corresponding raw files)
 		for i := range 3 {
-			_, err := os.Create(filepath.Join(dirTest, fmt.Sprintf("photo%d.xmp", i+1)))
-			require.NoError(t, err)
+			fsys.addFile(fmt.Sprintf("photo%d.xmp", i+1), "")
 		}
 
-		count, err := deleteZombieEditFiles("xmp", dirTest, []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 3, count)
 
 		// Verify all zombie files are deleted
-		entries, err := os.ReadDir(dirTest)
+		entries, err := fsys.ReadDir(".")
 		require.NoError(t, err)
 		assert.Equal(t, 0, len(entries))
 	})
 
 	t.Run("keeps edit files when corresponding raw file exists", func(t *testing.T) {
-		dirTest := t.TempDir()
+		fsys := newFakeFileSystem()
 
 		// Create edit file with corresponding raw file
-		_, err := os.Create(filepath.Join(dirTest, "photo1.xmp"))
-		require.NoError(t, err)
-		_, err = os.Create(filepath.Join(dirTest, "photo1.arw"))
-		require.NoError(t, err)
+		fsys.addFile("photo1.xmp", "")
+		fsys.addFile("photo1.arw", "")
 
 		// Create another edit file with corresponding raw file (different extension)
-		_, err = os.Create(filepath.Join(dirTest, "photo2.xmp"))
-		require.NoError(t, err)
-		_, err = os.Create(filepath.Join(dirTest, "photo2.raw"))
-		require.NoError(t, err)
+		fsys.addFile("photo2.xmp", "")
+		fsys.addFile("photo2.raw", "")
 
-		count, err := deleteZombieEditFiles("xmp", dirTest, []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
 
 		// Verify all files still exist
-		entries, err := os.ReadDir(dirTest)
+		entries, err := fsys.ReadDir(".")
 		require.NoError(t, err)
 		assert.Equal(t, 4, len(entries))
 	})
 
 	t.Run("mixed scenario with some zombie and some valid edit files", func(t *testing.T) {
-		dirTest := t.TempDir()
+		fsys := newFakeFileSystem()
 
 		// Create valid edit file (has corresponding raw)
-		_, err := os.Create(filepath.Join(dirTest, "valid.xmp"))
-		require.NoError(t, err)
-		_, err = os.Create(filepath.Join(dirTest, "valid.arw"))
-		require.NoError(t, err)
+		fsys.addFile("valid.xmp", "")
+		fsys.addFile("valid.arw", "")
 
 		// Create zombie edit files (no corresponding raw)
-		_, err = os.Create(filepath.Join(dirTest, "zombie1.xmp"))
-		require.NoError(t, err)
-		_, err = os.Create(filepath.Join(dirTest, "zombie2.xmp"))
-		require.NoError(t, err)
+		fsys.addFile("zombie1.xmp", "")
+		fsys.addFile("zombie2.xmp", "")
 
-		count, err := deleteZombieEditFiles("xmp", dirTest, []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 2, count)
 
 		// Verify valid files still exist and zombies are deleted
-		entries, err := os.ReadDir(dirTest)
+		entries, err := fsys.ReadDir(".")
 		require.NoError(t, err)
 
 		fileNames := make([]string, len(entries))
@@ -160,68 +134,63 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 	})
 
 	t.Run("does not delete non-edit files", func(t *testing.T) {
-		dirTest := t.TempDir()
+		fsys := newFakeFileSystem()
 
 		// Create non-edit files
-		_, err := os.Create(filepath.Join(dirTest, "photo.jpg"))
-		require.NoError(t, err)
-		_, err = os.Create(filepath.Join(dirTest, "photo.png"))
-		require.NoError(t, err)
+		fsys.addFile("photo.jpg", "")
+		fsys.addFile("photo.png", "")
 
-		count, err := deleteZombieEditFiles("xmp", dirTest, []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
 
 		// Verify files still exist
-		entries, err := os.ReadDir(dirTest)
+		entries, err := fsys.ReadDir(".")
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(entries))
 	})
 
 	t.Run("handles empty directory", func(t *testing.T) {
-		dirTest := t.TempDir()
+		fsys := newFakeFileSystem()
 
-		count, err := deleteZombieEditFiles("xmp", dirTest, []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
 
 	t.Run("returns error for non-existent directory", func(t *testing.T) {
-		count, err := deleteZombieEditFiles("xmp", "/non/existent/path", []string{"arw", "raw"}, false)
+		fsys := newFakeFileSystem()
+
+		count, err := deleteZombieEditFiles(fsys, "xmp", "/non/existent/path", []string{"arw", "raw"}, false)
 
 		assert.Error(t, err)
 		assert.Equal(t, 0, count)
 	})
 
 	t.Run("recursive mode deletes zombie files in subdirectories", func(t *testing.T) {
-		dirTest := t.TempDir()
-		subDir := filepath.Join(dirTest, "subdir")
-		err := os.MkdirAll(subDir, 0755)
-		require.NoError(t, err)
+		fsys := newFakeFileSystem()
+		subDir := "subdir"
+		fsys.addDir(subDir)
 
 		// Create zombie edit file in root
-		_, err = os.Create(filepath.Join(dirTest, "root_zombie.xmp"))
-		require.NoError(t, err)
+		fsys.addFile("root_zombie.xmp", "")
 
 		// Create zombie edit file in subdirectory
-		_, err = os.Create(filepath.Join(subDir, "sub_zombie.xmp"))
-		require.NoError(t, err)
+		fsys.addFile(filepath.Join(subDir, "sub_zombie.xmp"), "")
 
 		// Create valid edit file with raw in subdirectory
-		_, err = os.Create(filepath.Join(subDir, "valid.xmp"))
-		require.NoError(t, err)
-		_, err = os.Create(filepath.Join(subDir, "valid.arw"))
-		require.NoError(t, err)
+		fsys.addFile(filepath.Join(subDir, "valid.xmp"), "")
+		fsys.addFile(filepath.Join(subDir, "valid.arw"), "")
 
-		count, err := deleteZombieEditFiles("xmp", dirTest, []string{"arw", "raw"}, true)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, true)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 2, count) // root_zombie.xmp + sub_zombie.xmp
 
 		// Verify valid files in subdirectory still exist
-		entries, err := os.ReadDir(subDir)
+		entries, err := fsys.ReadDir(subDir)
 		require.NoError(t, err)
 		fileNames := make([]string, len(entries))
 		for i, entry := range entries {
@@ -231,26 +200,23 @@ func TestDeleteZombieEditFiles(t *testing.T) {
 	})
 
 	t.Run("non-recursive mode skips subdirectories", func(t *testing.T) {
-		dirTest := t.TempDir()
-		subDir := filepath.Join(dirTest, "subdir")
-		err := os.MkdirAll(subDir, 0755)
-		require.NoError(t, err)
+		fsys := newFakeFileSystem()
+		subDir := "subdir"
+		fsys.addDir(subDir)
 
 		// Create zombie edit file in root
-		_, err = os.Create(filepath.Join(dirTest, "root_zombie.xmp"))
-		require.NoError(t, err)
+		fsys.addFile("root_zombie.xmp", "")
 
 		// Create zombie edit file in subdirectory
-		_, err = os.Create(filepath.Join(subDir, "sub_zombie.xmp"))
-		require.NoError(t, err)
+		fsys.addFile(filepath.Join(subDir, "sub_zombie.xmp"), "")
 
-		count, err := deleteZombieEditFiles("xmp", dirTest, []string{"arw", "raw"}, false)
+		count, err := deleteZombieEditFiles(fsys, "xmp", ".", []string{"arw", "raw"}, false)
 
 		assert.NoError(t, err)
 		assert.Equal(t, 1, count) // only root_zombie.xmp
 
 		// Verify subdirectory file still exists
-		entries, err := os.ReadDir(subDir)
+		entries, err := fsys.ReadDir(subDir)
 		require.NoError(t, err)
 		assert.Equal(t, 1, len(entries))
 		assert.Equal(t, "sub_zombie.xmp", entries[0].Name())
@@ -267,14 +233,14 @@ func TestCopyFilesDeadlock(t *testing.T) {
 		err := os.WriteFile(srcFilePath, []byte("hello"), 0644)
 		require.NoError(t, err)
 
-		// Create a directory in the destination with the same name as the source file
-		// This will cause os.Create(dstPath) in copyFile to fail.
+		// Create a directory in the destination with the same name as the source file.
+		// This will cause os.Create(dstPath) in osFileSystem.CopyFile to fail.
 		err = os.Mkdir(filepath.Join(dirDst, "file1.txt"), 0755)
 		require.NoError(t, err)
 
 		// This call would hang if the deadlock is present.
 		// We expect it to complete with an error.
-		count, err := copyFiles(dirSrc, dirDst, "txt", false, true)
+		count, err := copyFiles(osFileSystem{}, dirSrc, dirDst, "txt", false, true)
 
 		assert.Error(t, err)
 		assert.Equal(t, 0, count)

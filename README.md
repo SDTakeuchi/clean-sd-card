@@ -25,7 +25,7 @@ This tool scans a source directory for files with `.arw` or `.raw` extensions. I
 You can run the tool directly using `go run`:
 
 ```bash
-go run main.go [flags]
+go run . [flags]
 ```
 
 ### Flags
@@ -41,29 +41,29 @@ go run main.go [flags]
 **1. Dry Run (Safe Mode)**
 Check what files would be copied and removed without actually doing it:
 ```bash
-go run main.go -dry-run
+go run . -dry-run
 ```
 
 **2. Standard Run**
 Copy files and clean the SD card (skips existing files in destination):
 ```bash
-go run main.go
+go run .
 ```
 
 **3. Overwrite Existing Files**
 Copy files and overwrite duplicates in the destination:
 ```bash
-go run main.go -overwrite
+go run . -overwrite
 ```
 
 **4. Custom Source and Destination**
 Specify custom directories:
 ```bash
-go run main.go -src /path/to/sd/card -dst /path/to/backup
+go run . -src /path/to/sd/card -dst /path/to/backup
 ```
 
 **5. Skip Zombie Edit File Cleanup**
 Keep orphaned `.xmp` files in the destination:
 ```bash
-go run main.go -delete-zombie-edit-files=false
+go run . -delete-zombie-edit-files=false
 ```
