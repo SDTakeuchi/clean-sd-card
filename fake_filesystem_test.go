@@ -181,3 +181,28 @@ func (i fakeFileInfo) Mode() fs.FileMode {
 func (i fakeFileInfo) ModTime() time.Time { return time.Time{} }
 func (i fakeFileInfo) IsDir() bool        { return i.isDir }
 func (i fakeFileInfo) Sys() any           { return nil }
+
+// readDirCountingFileSystem wraps a FileSystem and counts ReadDir calls per
+// directory, so tests can assert a directory isn't listed more than once.
+type readDirCountingFileSystem struct {
+	FileSystem
+	mu           sync.Mutex
+	readDirCalls map[string]int
+}
+
+func newReadDirCountingFileSystem(fsys FileSystem) *readDirCountingFileSystem {
+	return &readDirCountingFileSystem{FileSystem: fsys, readDirCalls: make(map[string]int)}
+}
+
+func (f *readDirCountingFileSystem) ReadDir(dir string) ([]os.DirEntry, error) {
+	f.mu.Lock()
+	f.readDirCalls[dir]++
+	f.mu.Unlock()
+	return f.FileSystem.ReadDir(dir)
+}
+
+func (f *readDirCountingFileSystem) callsFor(dir string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.readDirCalls[dir]
+}

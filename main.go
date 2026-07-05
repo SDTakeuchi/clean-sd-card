@@ -91,25 +91,26 @@ func cleanSDCard(
 		}
 	}
 
+	// List dirSrc once and reuse it for the raw copy, JPG copy, and removal
+	// steps below, instead of re-reading it once per extension group. dirSrc
+	// is typically a slow SD card, so this avoids redundant directory reads
+	// against it.
+	entries, err := fsys.ReadDir(dirSrc)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to read source directory: %w", err)
+	}
+
 	// copy raw files
-	totalCopied := 0
-	for _, ext := range extensionsToCopy {
-		n, err := copyFiles(fsys, dirSrc, dirDst, ext, opts.DryRun, opts.Overwrite)
-		if err != nil {
-			return totalCopied, 0, fmt.Errorf("failed to copy .%s files (copied %d): %w", ext, n, err)
-		}
-		totalCopied += n
+	totalCopied, err := copyFiles(fsys, entries, dirSrc, dirDst, extensionsToCopy, opts.DryRun, opts.Overwrite)
+	if err != nil {
+		return totalCopied, 0, fmt.Errorf("failed to copy files with extensions %v (copied %d): %w", extensionsToCopy, totalCopied, err)
 	}
 
 	// copy jpg
 	if opts.KeepJPG {
-		var countJPGToCopy int
-		for _, ext := range extensionsJPG {
-			n, err := copyFiles(fsys, dirSrc, dirDstJPG, ext, opts.DryRun, opts.Overwrite)
-			if err != nil {
-				return 0, 0, fmt.Errorf("failed to copy .%s files to %s (copied %d): %w", ext, dirDstJPG, n, err)
-			}
-			countJPGToCopy += n
+		countJPGToCopy, err := copyFiles(fsys, entries, dirSrc, dirDstJPG, extensionsJPG, opts.DryRun, opts.Overwrite)
+		if err != nil {
+			return totalCopied, 0, fmt.Errorf("failed to copy JPG files to %s (copied %d): %w", dirDstJPG, countJPGToCopy, err)
 		}
 		if opts.DryRun {
 			log.Printf("[dry-run] would copy %d JPG files\n", countJPGToCopy)
@@ -122,8 +123,7 @@ func cleanSDCard(
 	// remove source files
 	removedCount := 0
 	if !opts.DryRun && !opts.KeepSrc {
-		var err error
-		removedCount, err = removeFiles(fsys, dirSrc)
+		removedCount, err = removeFiles(fsys, entries, dirSrc)
 		if err != nil {
 			return totalCopied, removedCount, fmt.Errorf("failed to remove source files: %w", err)
 		}

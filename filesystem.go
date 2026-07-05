@@ -97,23 +97,33 @@ func forEachEntryConcurrently(entries []os.DirEntry, fn func(entry os.DirEntry) 
 	return int(count.Load()), errs
 }
 
-// copyFiles copies files with the given extension from srcDir to dstDir.
+// matchesAnyExtension reports whether name has one of exts as its extension.
+func matchesAnyExtension(name string, exts []string) bool {
+	nameExt := filepath.Ext(name)
+	for _, ext := range exts {
+		if strings.EqualFold(nameExt, "."+ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// copyFiles copies entries whose extension is in exts from srcDir to dstDir.
+// entries is a directory listing of srcDir supplied by the caller so that a
+// single srcDir listing can be shared across multiple extension groups
+// instead of re-reading the (potentially slow, e.g. SD card) source directory
+// once per group.
 // If flagDryRun is true, it counts files without copying.
 // If flagOverwrite is true, it overwrites existing files in dstDir.
 // It returns the number of files copied and any error.
-func copyFiles(fsys FileSystem, srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int, error) {
-	entries, err := fsys.ReadDir(srcDir)
-	if err != nil {
-		return 0, err
-	}
-
+func copyFiles(fsys FileSystem, entries []os.DirEntry, srcDir, dstDir string, exts []string, flagDryRun, flagOverwrite bool) (int, error) {
 	return forEachEntryConcurrently(entries, func(entry os.DirEntry) (int, error) {
 		if entry.IsDir() {
 			return 0, nil
 		}
 
 		name := entry.Name()
-		if !strings.EqualFold(filepath.Ext(name), "."+ext) {
+		if !matchesAnyExtension(name, exts) {
 			return 0, nil
 		}
 
@@ -141,14 +151,10 @@ func copyFiles(fsys FileSystem, srcDir, dstDir, ext string, flagDryRun, flagOver
 	})
 }
 
-// removeFiles removes all files in the directory.
+// removeFiles removes all files in entries, a directory listing of dir
+// supplied by the caller (see copyFiles).
 // It returns the number of files removed and any error.
-func removeFiles(fsys FileSystem, dir string) (int, error) {
-	entries, err := fsys.ReadDir(dir)
-	if err != nil {
-		return 0, err
-	}
-
+func removeFiles(fsys FileSystem, entries []os.DirEntry, dir string) (int, error) {
 	return forEachEntryConcurrently(entries, func(entry os.DirEntry) (int, error) {
 		if entry.IsDir() {
 			return 0, nil
