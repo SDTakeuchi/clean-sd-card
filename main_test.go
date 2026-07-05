@@ -64,6 +64,33 @@ func TestCleanSDCard(t *testing.T) {
 	assert.Equal(t, 0, len(entries))
 }
 
+func TestCleanSDCardReadsSourceDirOnce(t *testing.T) {
+	fake := newFakeFileSystem()
+	dirSrc := "src"
+	dirDst := "dst"
+	dirDstJPG := "dst-jpg"
+
+	fake.addFile(filepath.Join(dirSrc, "photo1.raw"), "content")
+	fake.addFile(filepath.Join(dirSrc, "photo2.arw"), "content")
+	fake.addFile(filepath.Join(dirSrc, "photo3.jpg"), "content")
+
+	counting := newReadDirCountingFileSystem(fake)
+
+	_, _, err := cleanSDCard(
+		counting,
+		[]string{"xmp"},
+		[]string{"raw", "arw"},
+		[]string{"jpg", "jpeg"},
+		dirSrc,
+		dirDst,
+		dirDstJPG,
+		Options{KeepJPG: true, DeleteZombieEditFiles: false},
+	)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1, counting.callsFor(dirSrc), "dirSrc should only be listed once, shared across the raw copy, JPG copy, and removal steps")
+}
+
 func TestDeleteZombieEditFiles(t *testing.T) {
 	t.Run("deletes zombie edit files when no corresponding raw file exists", func(t *testing.T) {
 		fsys := newFakeFileSystem()
@@ -238,9 +265,13 @@ func TestCopyFilesDeadlock(t *testing.T) {
 		err = os.Mkdir(filepath.Join(dirDst, "file1.txt"), 0755)
 		require.NoError(t, err)
 
+		fsys := osFileSystem{}
+		entries, err := fsys.ReadDir(dirSrc)
+		require.NoError(t, err)
+
 		// This call would hang if the deadlock is present.
 		// We expect it to complete with an error.
-		count, err := copyFiles(osFileSystem{}, dirSrc, dirDst, "txt", false, true)
+		count, err := copyFiles(fsys, entries, dirSrc, dirDst, []string{"txt"}, false, true)
 
 		assert.Error(t, err)
 		assert.Equal(t, 0, count)
