@@ -2,50 +2,53 @@ package main
 
 // Sample usage:
 //
-//	go run . -dry-run
-//	go run . -overwrite
-//	go run . -dry-run -overwrite
+//	go run main.go -dry-run
+//	go run main.go -overwrite
+//	go run main.go -dry-run -overwrite
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+)
+
+const (
+	defaultDirSrc = "E:\\DCIM\\100MSDCF"
+	defaultDirDst = "D:\\raw"
+
+	defaultDirDstJPG = "D:\\jpeg"
 )
 
 func main() {
 	var (
+		editFileExtensions        = []string{"xmp"} // lightroom's default edit file extension when edited in local machine
+		extensionsToCopy          = []string{"arw", "raw"}
+		extensionsJPG             = []string{"jpg", "jpeg"}
 		flagDryRun                bool
+		flagKeepJPG               bool
+		flagKeepSrc               bool
 		flagOverwrite             bool
-		flagKeepJPGs              bool
 		flagDeleteZombieEditFiles bool
-		dirSrc                    string
-		dirDst                    string
-		dirDstJPGs                string // Directory to store JPG files
-
-		/// folderCreationThresholdOneDay is the minimum number of photos taken on the same date
-		// required to create a separate folder for that date
-		folderCreationThresholdOneDay int
-
-		// folderCreationThresholdConsecutiveDays is the minimum number of consecutive days
-		// where photo count exceeds folderCreationThresholdOneDay required to create
-		// a separate folder grouping those days together
-		folderCreationThresholdConsecutiveDays int
+		dirSrc, dirDst            string
 	)
 
 	flag.BoolVar(&flagDryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
 	flag.BoolVar(&flagOverwrite, "overwrite", false, "Overwrite existing files in destination (default: false)")
-	flag.BoolVar(&flagKeepJPGs, "keep-jpgs", true, "Keep JPG files in destination (default: true)")
+	flag.BoolVar(&flagKeepJPG, "keep-jpg", true, "Keep JPG files in destination (default: true)")
+	flag.BoolVar(&flagKeepSrc, "keep-src", false, "Keep files in the source (SD card) directory after copying instead of removing them (default: false)")
 	flag.BoolVar(&flagDeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
-
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
-	flag.StringVar(&dirDstJPGs, "dst-jpg", defaultDirDstJPGs, "Destination directory for JPG files")
-	flag.IntVar(&folderCreationThresholdOneDay, "folder-creation-threshold-one-day", defaultFolderCreationThresholdOneDay, "Threshold for creating a new directory in one day")
-	flag.IntVar(&folderCreationThresholdConsecutiveDays, "folder-creation-threshold-consecutive-days", defaultFolderCreationThresholdConsecutiveDays, "Threshold for creating a new directory in consecutive days")
-
 	flag.Parse()
 
+	log.Printf("Starting copying files from %s to %s with extensions %v\n", dirSrc, dirDst, extensionsToCopy)
 	if flagDryRun {
 		log.Println("Running in Dry-Run mode. No files will be modified.")
 	}
@@ -54,23 +57,24 @@ func main() {
 	} else {
 		log.Println("Running in Skip-Existing mode. Existing files in destination will be skipped.")
 	}
+	if flagKeepSrc {
+		log.Println("Running in Keep-Src mode. Files in the source directory will not be removed.")
+	}
 
 	totalCopied, removedCount, err := cleanSDCard(
-		EditFileExtensions,
-		ExtensionsToCopy,
-		ExtensionsJPG,
+		editFileExtensions,
+		extensionsToCopy,
+		extensionsJPG,
 		dirSrc,
 		dirDst,
-		dirDstJPGs,
-		folderCreationThresholdOneDay,
-		folderCreationThresholdConsecutiveDays,
 		flagDryRun,
+		flagKeepJPG,
+		flagKeepSrc,
 		flagOverwrite,
 		flagDeleteZombieEditFiles,
-		flagKeepJPGs,
 	)
 	if err != nil {
-		log.Fatalf("Error cleaning SD card: %s", err.Error())
+		log.Fatalf("failed cleaning SD card: %s", err.Error())
 	}
 
 	log.Printf("\nSummary:\nFiles Copied: %d\nFiles Removed: %d\n", totalCopied, removedCount)
@@ -78,57 +82,294 @@ func main() {
 
 // cleanSDCard copies files from dirSrc to dirDst and removes files from dirSrc.
 // It returns the number of files copied, the number of files removed, and any error.
-func cleanSDCard(editFileExtensions, extensionsToCopy, extensionsJPG []string, dirSrc, dirDst, dirDstJPGs string, folderCreationThresholdOneDay int, folderCreationThresholdConsecutiveDays int, flagDryRun, flagOverwrite, flagDeleteZombieEditFiles, flagKeepJPGs bool) (int, int, error) {
+func cleanSDCard(
+	editFileExtensions, extensionsToCopy, extensionsJPG []string,
+	dirSrc, dirDst string,
+	flagDryRun, flagKeepJPG, flagKeepSrc, flagOverwrite, flagDeleteZombieEditFiles bool,
+) (int, int, error) {
 	if !flagDryRun {
 		if err := os.MkdirAll(dirDst, 0755); err != nil {
-			return 0, 0, fmt.Errorf("creating destination directory: %w", err)
+			return 0, 0, fmt.Errorf("failed to create destination directory: %w", err)
 		}
 	}
 
+	// copy raw files
 	totalCopied := 0
 	for _, ext := range extensionsToCopy {
-		n, err := copyFiles(dirSrc, dirDst, ext, folderCreationThresholdOneDay, folderCreationThresholdConsecutiveDays, flagDryRun, flagOverwrite)
+		n, err := copyFiles(dirSrc, dirDst, ext, flagDryRun, flagOverwrite)
 		if err != nil {
-			return totalCopied, 0, fmt.Errorf("processing .%s files (copied %d): %w", ext, n, err)
+			return totalCopied, 0, fmt.Errorf("failed to copy .%s files (copied %d): %w", ext, n, err)
 		}
 		totalCopied += n
 	}
 
-	// Process JPG files if flagKeepJPGs is false
-	if !flagKeepJPGs {
-		if !flagDryRun {
-			if err := os.MkdirAll(dirDstJPGs, 0755); err != nil {
-				return totalCopied, 0, fmt.Errorf("failed to create JPG destination directory: %w", err)
+	// copy jpg
+	var countJPGToCopy int
+	if flagKeepJPG {
+		if flagDryRun {
+			var countErr error
+			// just count jpg files without copying
+			for _, ext := range extensionsJPG {
+				c, err := countFilesWithExtension(dirSrc, ext)
+				if err != nil {
+					countErr = errors.Join(countErr, err)
+					continue
+				}
+				countJPGToCopy += c
 			}
-		}
-
-		for _, ext := range extensionsJPG {
-			n, err := copyFiles(dirSrc, dirDstJPGs, ext, folderCreationThresholdOneDay, folderCreationThresholdConsecutiveDays, flagDryRun, flagOverwrite)
-			if err != nil {
-				return totalCopied, 0, fmt.Errorf("processing .%s files (copied %d): %w", ext, n, err)
+			if countErr != nil {
+				log.Printf("[WARN] failed to count jpg files: %s", countErr.Error())
+			} else {
+				log.Printf("[dry-run] would copy %d JPG files\n", countJPGToCopy)
 			}
-			totalCopied += n
+		} else {
+			for _, ext := range extensionsJPG {
+				n, err := copyFiles(dirSrc, defaultDirDstJPG, ext, flagDryRun, flagOverwrite)
+				if err != nil {
+					return 0, 0, fmt.Errorf("failed to copy .%s files to %s (copied %d): %w", ext, defaultDirDstJPG, n, err)
+				}
+				countJPGToCopy += n
+			}
+			log.Printf("copied %d JPG files to %s\n", countJPGToCopy, defaultDirDstJPG)
+			totalCopied += countJPGToCopy
 		}
 	}
 
+	// remove source files
 	removedCount := 0
-	if !flagDryRun {
+	if !flagDryRun && !flagKeepSrc {
 		var err error
 		removedCount, err = removeFiles(dirSrc)
 		if err != nil {
-			return totalCopied, removedCount, fmt.Errorf("removing files: %w", err)
+			return totalCopied, removedCount, fmt.Errorf("failed to remove source files: %w", err)
 		}
 	}
 
+	// delete zombie edit files
 	if !flagDryRun && flagDeleteZombieEditFiles {
 		for _, editFileExtension := range editFileExtensions {
 			count, err := deleteZombieEditFiles(editFileExtension, dirDst, extensionsToCopy, true)
 			if err != nil {
-				return totalCopied, removedCount, fmt.Errorf("deleting zombie edit files with extension %s: %w", editFileExtension, err)
+				return totalCopied, removedCount, fmt.Errorf("failed to delete zombie edit files with extension %s: %w", editFileExtension, err)
 			}
 			removedCount += count
 		}
 	}
 
 	return totalCopied, removedCount, nil
+}
+
+type fileCopyError struct {
+	fileName string
+	err      error
+}
+
+func (e fileCopyError) Error() string {
+	return fmt.Sprintf("failed to copy file %s: %s", e.fileName, e.err.Error())
+}
+
+// copyFiles copies files with the given extension from srcDir to dstDir.
+// If flagDryRun is true, it counts files without copying.
+// If flagOverwrite is true, it overwrites existing files in dstDir.
+// It returns the number of files copied and any error.
+func copyFiles(srcDir, dstDir, ext string, flagDryRun, flagOverwrite bool) (int, error) {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return 0, err
+	}
+
+	var count atomic.Int32
+	var wg sync.WaitGroup
+	errsChan := make(chan fileCopyError, len(entries))
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		wg.Go(func() {
+			name := entry.Name()
+			if !strings.EqualFold(filepath.Ext(name), "."+ext) {
+				return
+			}
+
+			srcPath := filepath.Join(srcDir, name)
+			dstPath := filepath.Join(dstDir, name)
+
+			if !flagOverwrite {
+				if _, statErr := os.Stat(dstPath); statErr == nil {
+					log.Printf("skipping copying existing file: %s\n", name)
+					return
+				}
+			}
+
+			if flagDryRun {
+				log.Printf("[dry-run] would copy %s\n", name)
+				count.Add(1)
+				return
+			}
+
+			if copyErr := copyFile(srcPath, dstPath); copyErr != nil {
+				errsChan <- fileCopyError{fileName: name, err: copyErr}
+				return
+			}
+
+			log.Printf("copied %s\n", name)
+			count.Add(1)
+		})
+	}
+
+	wg.Wait()
+	close(errsChan)
+
+	for e := range errsChan {
+		err = errors.Join(err, e)
+	}
+
+	return int(count.Load()), err
+}
+
+// copyFile copies a single file from src to dst.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+
+// removeFiles removes all files in the directory.
+// It returns the number of files removed and any error.
+func removeFiles(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+
+	var count atomic.Int32
+	var wg sync.WaitGroup
+	errsChan := make(chan error, len(entries))
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		wg.Go(func() {
+			path := filepath.Join(dir, entry.Name())
+			if err := os.Remove(path); err != nil {
+				errsChan <- fmt.Errorf("failed to remove file %s: %w", entry.Name(), err)
+				return
+			}
+			log.Printf("removed %s\n", entry.Name())
+			count.Add(1)
+		})
+	}
+
+	wg.Wait()
+	close(errsChan)
+
+	for e := range errsChan {
+		err = errors.Join(err, e)
+	}
+
+	return int(count.Load()), err
+}
+
+// deleteZombieEditFiles deletes edit files that have no corresponding raw file.
+// It checks for raw files with extensions in rawFileExtensions.
+// If isRecursive is true, it processes subdirectories recursively.
+// It returns the number of files deleted and any error.
+func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []string, isRecursive bool) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("reading directory: %w", err)
+	}
+
+	var count atomic.Int32
+	var wg sync.WaitGroup
+	errsChan := make(chan error, len(entries))
+
+	for _, entry := range entries {
+		wg.Go(func() {
+			if entry.IsDir() {
+				if isRecursive {
+					n, err := deleteZombieEditFiles(editFileExtension, filepath.Join(dir, entry.Name()), rawFileExtensions, isRecursive)
+					if err != nil {
+						errsChan <- fmt.Errorf("failed to process subdirectory %s: %w", entry.Name(), err)
+						return
+					}
+					count.Add(int32(n))
+				}
+				return
+			}
+
+			editFileName := entry.Name()
+			if !strings.HasSuffix(editFileName, "."+editFileExtension) {
+				return
+			}
+
+			editFileNameWithoutExt := strings.TrimSuffix(editFileName, "."+editFileExtension)
+
+			hasCorrespondingRawFile := false
+			for _, rawFileExt := range rawFileExtensions {
+				expectedRawFileName := editFileNameWithoutExt + "." + rawFileExt
+				if _, err := os.Stat(filepath.Join(dir, expectedRawFileName)); err == nil {
+					hasCorrespondingRawFile = true
+					break
+				} else if !errors.Is(err, os.ErrNotExist) {
+					errsChan <- fmt.Errorf("failed to check if %s exists: %w", expectedRawFileName, err)
+					return
+				}
+			}
+			if hasCorrespondingRawFile {
+				return
+			}
+
+			if err := os.Remove(filepath.Join(dir, editFileName)); err != nil {
+				errsChan <- fmt.Errorf("failed to remove zombie edit file %s: %w", editFileName, err)
+				return
+			}
+
+			log.Printf("removed zombie edit file: %s\n", editFileName)
+			count.Add(1)
+		})
+	}
+
+	wg.Wait()
+	close(errsChan)
+
+	for e := range errsChan {
+		err = errors.Join(err, e)
+	}
+
+	return int(count.Load()), err
+}
+
+func countFilesWithExtension(dir, ext string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read directory %s: %w", dir, err)
+	}
+
+	var count atomic.Uint32
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.EqualFold(filepath.Ext(entry.Name()), "."+ext) {
+			count.Add(1)
+		}
+	}
+
+	return int(count.Load()), nil
 }
