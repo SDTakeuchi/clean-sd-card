@@ -17,6 +17,13 @@ const (
 	defaultDirDst = "D:\\raw"
 
 	defaultDirDstJPG = "D:\\jpeg"
+
+	// defaultConcurrency caps how many files are copied/removed at once.
+	// dirSrc is typically an SD card behind a single physical read channel,
+	// so unbounded per-file concurrency doesn't help throughput and can hurt
+	// it (more random access, more scheduling overhead). This is a starting
+	// point, not a measured optimum -- tune with -concurrency.
+	defaultConcurrency = 4
 )
 
 // Options holds the flags that control cleanSDCard's behavior.
@@ -26,6 +33,7 @@ type Options struct {
 	KeepSrc               bool
 	Overwrite             bool
 	DeleteZombieEditFiles bool
+	Concurrency           int
 }
 
 func main() {
@@ -42,6 +50,7 @@ func main() {
 	flag.BoolVar(&opts.KeepJPG, "keep-jpg", true, "Keep JPG files in destination (default: true)")
 	flag.BoolVar(&opts.KeepSrc, "keep-src", false, "Keep files in the source (SD card) directory after copying instead of removing them (default: false)")
 	flag.BoolVar(&opts.DeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
+	flag.IntVar(&opts.Concurrency, "concurrency", defaultConcurrency, "Maximum number of files to copy/remove concurrently (default: 4). Tune based on your card reader's actual throughput.")
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
 	flag.StringVar(&dirDstJPG, "dst-jpg", defaultDirDstJPG, "Destination directory for JPG files")
@@ -101,14 +110,14 @@ func cleanSDCard(
 	}
 
 	// copy raw files
-	totalCopied, err := copyFiles(fsys, entries, dirSrc, dirDst, extensionsToCopy, opts.DryRun, opts.Overwrite)
+	totalCopied, err := copyFiles(fsys, entries, dirSrc, dirDst, extensionsToCopy, opts.DryRun, opts.Overwrite, opts.Concurrency)
 	if err != nil {
 		return totalCopied, 0, fmt.Errorf("failed to copy files with extensions %v (copied %d): %w", extensionsToCopy, totalCopied, err)
 	}
 
 	// copy jpg
 	if opts.KeepJPG {
-		countJPGToCopy, err := copyFiles(fsys, entries, dirSrc, dirDstJPG, extensionsJPG, opts.DryRun, opts.Overwrite)
+		countJPGToCopy, err := copyFiles(fsys, entries, dirSrc, dirDstJPG, extensionsJPG, opts.DryRun, opts.Overwrite, opts.Concurrency)
 		if err != nil {
 			return totalCopied, 0, fmt.Errorf("failed to copy JPG files to %s (copied %d): %w", dirDstJPG, countJPGToCopy, err)
 		}
@@ -123,7 +132,7 @@ func cleanSDCard(
 	// remove source files
 	removedCount := 0
 	if !opts.DryRun && !opts.KeepSrc {
-		removedCount, err = removeFiles(fsys, entries, dirSrc)
+		removedCount, err = removeFiles(fsys, entries, dirSrc, opts.Concurrency)
 		if err != nil {
 			return totalCopied, removedCount, fmt.Errorf("failed to remove source files: %w", err)
 		}
@@ -132,7 +141,7 @@ func cleanSDCard(
 	// delete zombie edit files
 	if !opts.DryRun && opts.DeleteZombieEditFiles {
 		for _, editFileExtension := range editFileExtensions {
-			count, err := deleteZombieEditFiles(fsys, editFileExtension, dirDst, extensionsToCopy, true)
+			count, err := deleteZombieEditFiles(fsys, editFileExtension, dirDst, extensionsToCopy, true, opts.Concurrency)
 			if err != nil {
 				return totalCopied, removedCount, fmt.Errorf("failed to delete zombie edit files with extension %s: %w", editFileExtension, err)
 			}
