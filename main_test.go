@@ -16,6 +16,7 @@ func TestCleanSDCard(t *testing.T) {
 	dirTest := "test"
 	dirSrc := filepath.Join(dirTest, "src")
 	dirDst := filepath.Join(dirTest, "dst")
+	dirDstJPG := filepath.Join(dirTest, "dst-jpg")
 	editFileExtensions := []string{"xmp"}
 	extensionsToCopy := []string{"raw"}
 	extensionsJPG := []string{"jpg"}
@@ -51,6 +52,7 @@ func TestCleanSDCard(t *testing.T) {
 		extensionsJPG,
 		dirSrc,
 		dirDst,
+		dirDstJPG,
 		opts,
 	)
 
