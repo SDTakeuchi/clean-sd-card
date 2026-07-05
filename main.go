@@ -105,35 +105,21 @@ func cleanSDCard(
 	}
 
 	// copy jpg
-	var countJPGToCopy int
 	if opts.KeepJPG {
-		if opts.DryRun {
-			var countErr error
-			// just count jpg files without copying
-			for _, ext := range extensionsJPG {
-				c, err := countFilesWithExtension(dirSrc, ext)
-				if err != nil {
-					countErr = errors.Join(countErr, err)
-					continue
-				}
-				countJPGToCopy += c
+		var countJPGToCopy int
+		for _, ext := range extensionsJPG {
+			n, err := copyFiles(dirSrc, defaultDirDstJPG, ext, opts.DryRun, opts.Overwrite)
+			if err != nil {
+				return 0, 0, fmt.Errorf("failed to copy .%s files to %s (copied %d): %w", ext, defaultDirDstJPG, n, err)
 			}
-			if countErr != nil {
-				log.Printf("[WARN] failed to count jpg files: %s", countErr.Error())
-			} else {
-				log.Printf("[dry-run] would copy %d JPG files\n", countJPGToCopy)
-			}
-		} else {
-			for _, ext := range extensionsJPG {
-				n, err := copyFiles(dirSrc, defaultDirDstJPG, ext, opts.DryRun, opts.Overwrite)
-				if err != nil {
-					return 0, 0, fmt.Errorf("failed to copy .%s files to %s (copied %d): %w", ext, defaultDirDstJPG, n, err)
-				}
-				countJPGToCopy += n
-			}
-			log.Printf("copied %d JPG files to %s\n", countJPGToCopy, defaultDirDstJPG)
-			totalCopied += countJPGToCopy
+			countJPGToCopy += n
 		}
+		if opts.DryRun {
+			log.Printf("[dry-run] would copy %d JPG files\n", countJPGToCopy)
+		} else {
+			log.Printf("copied %d JPG files to %s\n", countJPGToCopy, defaultDirDstJPG)
+		}
+		totalCopied += countJPGToCopy
 	}
 
 	// remove source files
@@ -327,23 +313,4 @@ func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []st
 		log.Printf("removed zombie edit file: %s\n", editFileName)
 		return 1, nil
 	})
-}
-
-func countFilesWithExtension(dir, ext string) (int, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, fmt.Errorf("failed to read directory %s: %w", dir, err)
-	}
-
-	var count atomic.Uint32
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if strings.EqualFold(filepath.Ext(entry.Name()), "."+ext) {
-			count.Add(1)
-		}
-	}
-
-	return int(count.Load()), nil
 }
