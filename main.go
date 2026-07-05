@@ -33,6 +33,7 @@ func main() {
 		extensionsJPG             = []string{"jpg", "jpeg"}
 		flagDryRun                bool
 		flagKeepJPG               bool
+		flagKeepSrc               bool
 		flagOverwrite             bool
 		flagDeleteZombieEditFiles bool
 		dirSrc, dirDst            string
@@ -41,6 +42,7 @@ func main() {
 	flag.BoolVar(&flagDryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
 	flag.BoolVar(&flagOverwrite, "overwrite", false, "Overwrite existing files in destination (default: false)")
 	flag.BoolVar(&flagKeepJPG, "keep-jpg", true, "Keep JPG files in destination (default: true)")
+	flag.BoolVar(&flagKeepSrc, "keep-src", false, "Keep files in the source (SD card) directory after copying instead of removing them (default: false)")
 	flag.BoolVar(&flagDeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
 	flag.StringVar(&dirDst, "dst", defaultDirDst, "Destination directory")
@@ -55,6 +57,9 @@ func main() {
 	} else {
 		log.Println("Running in Skip-Existing mode. Existing files in destination will be skipped.")
 	}
+	if flagKeepSrc {
+		log.Println("Running in Keep-Src mode. Files in the source directory will not be removed.")
+	}
 
 	totalCopied, removedCount, err := cleanSDCard(
 		editFileExtensions,
@@ -64,6 +69,7 @@ func main() {
 		dirDst,
 		flagDryRun,
 		flagKeepJPG,
+		flagKeepSrc,
 		flagOverwrite,
 		flagDeleteZombieEditFiles,
 	)
@@ -79,7 +85,7 @@ func main() {
 func cleanSDCard(
 	editFileExtensions, extensionsToCopy, extensionsJPG []string,
 	dirSrc, dirDst string,
-	flagDryRun, flagKeepJPG, flagOverwrite, flagDeleteZombieEditFiles bool,
+	flagDryRun, flagKeepJPG, flagKeepSrc, flagOverwrite, flagDeleteZombieEditFiles bool,
 ) (int, int, error) {
 	if !flagDryRun {
 		if err := os.MkdirAll(dirDst, 0755); err != nil {
@@ -131,7 +137,7 @@ func cleanSDCard(
 
 	// remove source files
 	removedCount := 0
-	if !flagDryRun {
+	if !flagDryRun && !flagKeepSrc {
 		var err error
 		removedCount, err = removeFiles(dirSrc)
 		if err != nil {
@@ -313,8 +319,8 @@ func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []st
 			}
 
 			editFileNameWithoutExt := strings.TrimSuffix(editFileName, "."+editFileExtension)
-			hasCorrespondingRawFile := false
 
+			hasCorrespondingRawFile := false
 			for _, rawFileExt := range rawFileExtensions {
 				expectedRawFileName := editFileNameWithoutExt + "." + rawFileExt
 				if _, err := os.Stat(filepath.Join(dir, expectedRawFileName)); err == nil {
@@ -325,7 +331,6 @@ func deleteZombieEditFiles(editFileExtension, dir string, rawFileExtensions []st
 					return
 				}
 			}
-
 			if hasCorrespondingRawFile {
 				return
 			}

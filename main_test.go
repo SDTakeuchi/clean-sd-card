@@ -23,6 +23,7 @@ func TestCleanSDCard(t *testing.T) {
 	flagOverwrite := false
 	flagDeleteZombieEditFiles := false
 	flagKeepJPG := false
+	flagKeepSrc := false
 
 	fileCount := 30
 
@@ -50,6 +51,7 @@ func TestCleanSDCard(t *testing.T) {
 		dirDst,
 		flagDryRun,
 		flagKeepJPG,
+		flagKeepSrc,
 		flagOverwrite,
 		flagDeleteZombieEditFiles,
 	)
