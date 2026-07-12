@@ -48,7 +48,7 @@ func main() {
 	flag.BoolVar(&opts.DryRun, "dry-run", false, "Simulate operations without modifying files (default: false)")
 	flag.BoolVar(&opts.Overwrite, "overwrite", false, "Overwrite existing files in destination (default: false)")
 	flag.BoolVar(&opts.KeepJPG, "keep-jpg", true, "Keep JPG files in destination (default: true)")
-	flag.BoolVar(&opts.KeepSrc, "keep-src", false, "Keep files in the source (SD card) directory after copying instead of removing them (default: false)")
+	flag.BoolVar(&opts.KeepSrc, "keep-src", true, "Keep files in the source (SD card) directory after copying instead of removing them (default: true)")
 	flag.BoolVar(&opts.DeleteZombieEditFiles, "delete-zombie-edit-files", true, "Delete zombie edit files (default: true)")
 	flag.IntVar(&opts.Concurrency, "concurrency", defaultConcurrency, "Maximum number of files to copy/remove concurrently (default: 4). Tune based on your card reader's actual throughput.")
 	flag.StringVar(&dirSrc, "src", defaultDirSrc, "Source directory")
@@ -67,6 +67,8 @@ func main() {
 	}
 	if opts.KeepSrc {
 		log.Println("Running in Keep-Src mode. Files in the source directory will not be removed.")
+	} else {
+		log.Println("Keep-Src mode disabled. Files in the source directory will be removed after copying.")
 	}
 
 	totalCopied, removedCount, err := cleanSDCard(
