@@ -12,6 +12,46 @@ import (
 
 const testConcurrency = 4
 
+func TestDefaultVideoDirectories(t *testing.T) {
+	assert.Equal(t, "E:\\PRIVATE\\M4ROOT\\CLIP", defaultDirVideoSrc)
+	assert.Equal(t, "D:\\movies", defaultDirVideoDst)
+}
+
+func TestCopyVideoFiles(t *testing.T) {
+	fsys := newFakeFileSystem()
+	dirSrc := "video-src"
+	dirDst := "video-dst"
+
+	fsys.addFile(filepath.Join(dirSrc, "clip1.mp4"), "video 1")
+	fsys.addFile(filepath.Join(dirSrc, "clip2.MP4"), "video 2")
+	fsys.addFile(filepath.Join(dirSrc, "clip2M01.XML"), "metadata")
+	fsys.addFile(filepath.Join(dirSrc, "thumbnail.jpg"), "image")
+
+	copied, err := copyVideoFiles(
+		fsys,
+		[]string{"mp4", "xml"},
+		dirSrc,
+		dirDst,
+		Options{Concurrency: testConcurrency},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, copied)
+
+	destinationEntries, err := fsys.ReadDir(dirDst)
+	require.NoError(t, err)
+	assert.Len(t, destinationEntries, 3)
+	assert.ElementsMatch(
+		t,
+		[]string{"clip1.mp4", "clip2.MP4", "clip2M01.XML"},
+		[]string{destinationEntries[0].Name(), destinationEntries[1].Name(), destinationEntries[2].Name()},
+	)
+
+	sourceEntries, err := fsys.ReadDir(dirSrc)
+	require.NoError(t, err)
+	assert.Len(t, sourceEntries, 4, "video copies must not remove files from the SD card")
+}
+
 func TestCleanSDCard(t *testing.T) {
 	fsys := newFakeFileSystem()
 	dirSrc := "src"
