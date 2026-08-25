@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultDirSrc = "E:\\DCIM\\100MSDCF"
+	defaultDirSrc = "E:\\DCIM"
 	defaultDirDst = "D:\\raw"
 
 	defaultDirDstJPG = "D:\\jpeg"
@@ -202,24 +202,24 @@ func cleanSDCard(
 		}
 	}
 
-	// List dirSrc once and reuse it for the raw copy, JPG copy, and removal
-	// steps below, instead of re-reading it once per extension group. dirSrc
-	// is typically a slow SD card, so this avoids redundant directory reads
-	// against it.
-	entries, err := fsys.ReadDir(dirSrc)
+	// Walk dirSrc once and reuse the result for the raw copy, JPG copy, and
+	// removal steps below. Camera folders under DCIM can be incremented (for
+	// example, 100MSDCF to 101MSDCF), so every nested directory must be
+	// included without re-reading the SD card for each extension group.
+	sourceFiles, err := listFilesRecursively(fsys, dirSrc)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to read source directory: %w", err)
 	}
 
 	// copy raw files
-	totalCopied, err := copyFiles(fsys, entries, dirSrc, dirDst, extensionsToCopy, opts.DryRun, opts.Overwrite, opts.Concurrency)
+	totalCopied, err := copySourceFiles(fsys, sourceFiles, dirDst, extensionsToCopy, opts.DryRun, opts.Overwrite, opts.Concurrency)
 	if err != nil {
 		return totalCopied, 0, fmt.Errorf("failed to copy files with extensions %v (copied %d): %w", extensionsToCopy, totalCopied, err)
 	}
 
 	// copy jpg
 	if opts.KeepJPG {
-		countJPGToCopy, err := copyFiles(fsys, entries, dirSrc, dirDstJPG, extensionsJPG, opts.DryRun, opts.Overwrite, opts.Concurrency)
+		countJPGToCopy, err := copySourceFiles(fsys, sourceFiles, dirDstJPG, extensionsJPG, opts.DryRun, opts.Overwrite, opts.Concurrency)
 		if err != nil {
 			return totalCopied, 0, fmt.Errorf("failed to copy JPG files to %s (copied %d): %w", dirDstJPG, countJPGToCopy, err)
 		}
@@ -234,7 +234,7 @@ func cleanSDCard(
 	// remove source files
 	removedCount := 0
 	if !opts.DryRun && !opts.KeepSrc {
-		removedCount, err = removeFiles(fsys, entries, dirSrc, opts.Concurrency)
+		removedCount, err = removeSourceFiles(fsys, sourceFiles, opts.Concurrency)
 		if err != nil {
 			return totalCopied, removedCount, fmt.Errorf("failed to remove source files: %w", err)
 		}

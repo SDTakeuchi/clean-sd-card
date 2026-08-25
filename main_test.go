@@ -12,7 +12,8 @@ import (
 
 const testConcurrency = 4
 
-func TestDefaultVideoDirectories(t *testing.T) {
+func TestDefaultDirectories(t *testing.T) {
+	assert.Equal(t, "E:\\DCIM", defaultDirSrc)
 	assert.Equal(t, "E:\\PRIVATE\\M4ROOT\\CLIP", defaultDirVideoSrc)
 	assert.Equal(t, "D:\\movies", defaultDirVideoDst)
 }
@@ -132,6 +133,69 @@ func TestCleanSDCardReadsSourceDirOnce(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, 1, counting.callsFor(dirSrc), "dirSrc should only be listed once, shared across the raw copy, JPG copy, and removal steps")
+}
+
+func TestCleanSDCardRecursivelyProcessesIncrementedCameraDirectories(t *testing.T) {
+	fsys := newFakeFileSystem()
+	dirSrc := "DCIM"
+	dirDst := "dst"
+	dirDstJPG := "dst-jpg"
+
+	firstCameraDir := filepath.Join(dirSrc, "100MSDCF")
+	secondCameraDir := filepath.Join(dirSrc, "101MSDCF")
+	sourceFiles := map[string]string{
+		filepath.Join(firstCameraDir, "DSC09999.ARW"):  "raw 9999",
+		filepath.Join(firstCameraDir, "DSC09999.JPG"):  "jpg 9999",
+		filepath.Join(secondCameraDir, "DSC10000.ARW"): "raw 10000",
+		filepath.Join(secondCameraDir, "DSC10000.JPG"): "jpg 10000",
+	}
+	for path, content := range sourceFiles {
+		fsys.addFile(path, content)
+	}
+
+	totalCopied, removedCount, err := cleanSDCard(
+		fsys,
+		[]string{"xmp"},
+		[]string{"arw", "raw"},
+		[]string{"jpg", "jpeg"},
+		dirSrc,
+		dirDst,
+		dirDstJPG,
+		Options{
+			KeepJPG:               true,
+			KeepSrc:               false,
+			DeleteZombieEditFiles: false,
+			Concurrency:           testConcurrency,
+		},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 4, totalCopied)
+	assert.Equal(t, 4, removedCount)
+
+	rawEntries, err := fsys.ReadDir(dirDst)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"DSC09999.ARW", "DSC10000.ARW"}, entryNames(rawEntries))
+
+	jpgEntries, err := fsys.ReadDir(dirDstJPG)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"DSC09999.JPG", "DSC10000.JPG"}, entryNames(jpgEntries))
+
+	firstSourceEntries, err := fsys.ReadDir(firstCameraDir)
+	require.NoError(t, err)
+	assert.Empty(t, firstSourceEntries)
+
+	secondSourceEntries, err := fsys.ReadDir(secondCameraDir)
+	require.NoError(t, err)
+	assert.Empty(t, secondSourceEntries)
+}
+
+func entryNames(entries []os.DirEntry) []string {
+	names := make([]string, len(entries))
+	for i, entry := range entries {
+		names[i] = entry.Name()
+	}
+	return names
 }
 
 func TestDeleteZombieEditFiles(t *testing.T) {
