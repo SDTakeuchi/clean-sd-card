@@ -8,9 +8,9 @@ This tool copies `.arw` and `.raw` photos, plus `.mp4` videos and their `.xml` m
 
 ## Features
 
-- **Copy:** Safely copies `.arw` and `.raw` files to the destination.
+- **Copy:** Recursively finds `.arw` and `.raw` files below the photo source directory and copies them to the destination.
 - **Video Copy:** Copies `.mp4` videos and their `.xml` metadata files to a separate destination without removing the source files.
-- **Clean (opt-in):** Removes all files from the source directory after processing when `-keep-src=false` is passed.
+- **Clean (opt-in):** Removes all files from the source directory tree after processing when `-keep-src=false` is passed.
 - **Zombie Edit File Cleanup:** Automatically removes orphaned `.xmp` edit files (Lightroom sidecar files) that no longer have a corresponding RAW file.
 - **Dry Run:** Simulate the process to see what would happen without making actual changes.
 - **Overwrite Control:** Option to overwrite existing files in the destination.
@@ -31,7 +31,7 @@ go run . [flags]
 
 ### Flags
 
-- `-src`: Source directory (default: `E:\DCIM\100MSDCF`).
+- `-src`: Source directory (default: `E:\DCIM`). All nested camera directories, such as `100MSDCF` and `101MSDCF`, are scanned recursively.
 - `-dst`: Destination directory (default: `D:\raw`).
 - `-video-src`: Video source directory (default: `E:\PRIVATE\M4ROOT\CLIP`).
 - `-video-dst`: Video destination directory (default: `D:\movies`).
