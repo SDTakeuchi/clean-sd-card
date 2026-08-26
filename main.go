@@ -212,14 +212,14 @@ func cleanSDCard(
 	}
 
 	// copy raw files
-	totalCopied, err := copySourceFiles(fsys, sourceFiles, dirDst, extensionsToCopy, opts.DryRun, opts.Overwrite, opts.Concurrency)
+	totalCopied, err := copySourceFiles(fsys, sourceFiles, dirDst, extensionsToCopy, photoDestinationFileName, opts.DryRun, opts.Overwrite, opts.Concurrency)
 	if err != nil {
 		return totalCopied, 0, fmt.Errorf("failed to copy files with extensions %v (copied %d): %w", extensionsToCopy, totalCopied, err)
 	}
 
 	// copy jpg
 	if opts.KeepJPG {
-		countJPGToCopy, err := copySourceFiles(fsys, sourceFiles, dirDstJPG, extensionsJPG, opts.DryRun, opts.Overwrite, opts.Concurrency)
+		countJPGToCopy, err := copySourceFiles(fsys, sourceFiles, dirDstJPG, extensionsJPG, photoDestinationFileName, opts.DryRun, opts.Overwrite, opts.Concurrency)
 		if err != nil {
 			return totalCopied, 0, fmt.Errorf("failed to copy JPG files to %s (copied %d): %w", dirDstJPG, countJPGToCopy, err)
 		}

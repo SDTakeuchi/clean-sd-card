@@ -154,6 +154,44 @@ func matchesAnyExtension(name string, exts []string) bool {
 	return false
 }
 
+// preserveSourceFileName keeps the original base name at the destination.
+// It is used for files, such as videos, that do not need a camera-folder
+// prefix.
+func preserveSourceFileName(file sourceFile) string {
+	return file.name
+}
+
+// photoDestinationFileName inserts the numeric prefix of the immediate parent
+// directory before the final five-digit photo sequence. For example,
+// 101MSDCF/A7V00015.JPG becomes A7V10100015.JPG. If either component does not
+// match that camera naming pattern, the original file name is preserved.
+func photoDestinationFileName(file sourceFile) string {
+	parentName := filepath.Base(filepath.Dir(file.path))
+	parentNumberEnd := 0
+	for parentNumberEnd < len(parentName) && parentName[parentNumberEnd] >= '0' && parentName[parentNumberEnd] <= '9' {
+		parentNumberEnd++
+	}
+	if parentNumberEnd == 0 {
+		return file.name
+	}
+
+	extension := filepath.Ext(file.name)
+	stem := strings.TrimSuffix(file.name, extension)
+	const sequenceLength = 5
+	if len(stem) < sequenceLength {
+		return file.name
+	}
+
+	sequenceStart := len(stem) - sequenceLength
+	for i := sequenceStart; i < len(stem); i++ {
+		if stem[i] < '0' || stem[i] > '9' {
+			return file.name
+		}
+	}
+
+	return stem[:sequenceStart] + parentName[:parentNumberEnd] + stem[sequenceStart:] + extension
+}
+
 // copyFiles copies entries whose extension is in exts from srcDir to dstDir.
 // entries is a directory listing of srcDir supplied by the caller so that a
 // single srcDir listing can be shared across multiple extension groups
@@ -171,28 +209,30 @@ func copyFiles(fsys FileSystem, entries []os.DirEntry, srcDir, dstDir string, ex
 		files = append(files, sourceFile{name: entry.Name(), path: filepath.Join(srcDir, entry.Name())})
 	}
 
-	return copySourceFiles(fsys, files, dstDir, exts, flagDryRun, flagOverwrite, maxConcurrency)
+	return copySourceFiles(fsys, files, dstDir, exts, preserveSourceFileName, flagDryRun, flagOverwrite, maxConcurrency)
 }
 
 // copySourceFiles copies matching source files into a flat destination
-// directory. At most maxConcurrency files are copied at once.
-func copySourceFiles(fsys FileSystem, files []sourceFile, dstDir string, exts []string, flagDryRun, flagOverwrite bool, maxConcurrency int) (int, error) {
+// directory, using destinationFileName to derive each output name. At most
+// maxConcurrency files are copied at once.
+func copySourceFiles(fsys FileSystem, files []sourceFile, dstDir string, exts []string, destinationFileName func(sourceFile) string, flagDryRun, flagOverwrite bool, maxConcurrency int) (int, error) {
 	return forEachSourceFileConcurrently(files, maxConcurrency, func(file sourceFile) (int, error) {
 		if !matchesAnyExtension(file.name, exts) {
 			return 0, nil
 		}
 
-		dstPath := filepath.Join(dstDir, file.name)
+		destinationName := destinationFileName(file)
+		dstPath := filepath.Join(dstDir, destinationName)
 
 		if !flagOverwrite {
 			if _, statErr := fsys.Stat(dstPath); statErr == nil {
-				log.Printf("skipping copying existing file: %s\n", file.name)
+				log.Printf("skipping copying existing file: %s\n", destinationName)
 				return 0, nil
 			}
 		}
 
 		if flagDryRun {
-			log.Printf("[dry-run] would copy %s\n", file.path)
+			log.Printf("[dry-run] would copy %s to %s\n", file.path, dstPath)
 			return 1, nil
 		}
 
@@ -200,7 +240,7 @@ func copySourceFiles(fsys FileSystem, files []sourceFile, dstDir string, exts []
 			return 0, fileCopyError{fileName: file.path, err: copyErr}
 		}
 
-		log.Printf("copied %s\n", file.path)
+		log.Printf("copied %s to %s\n", file.path, dstPath)
 		return 1, nil
 	})
 }

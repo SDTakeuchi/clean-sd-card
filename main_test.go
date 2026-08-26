@@ -144,10 +144,10 @@ func TestCleanSDCardRecursivelyProcessesIncrementedCameraDirectories(t *testing.
 	firstCameraDir := filepath.Join(dirSrc, "100MSDCF")
 	secondCameraDir := filepath.Join(dirSrc, "101MSDCF")
 	sourceFiles := map[string]string{
-		filepath.Join(firstCameraDir, "DSC09999.ARW"):  "raw 9999",
-		filepath.Join(firstCameraDir, "DSC09999.JPG"):  "jpg 9999",
-		filepath.Join(secondCameraDir, "DSC10000.ARW"): "raw 10000",
-		filepath.Join(secondCameraDir, "DSC10000.JPG"): "jpg 10000",
+		filepath.Join(firstCameraDir, "A7V00015.ARW"):  "raw from 100",
+		filepath.Join(firstCameraDir, "A7V00015.JPG"):  "jpg from 100",
+		filepath.Join(secondCameraDir, "A7V00015.ARW"): "raw from 101",
+		filepath.Join(secondCameraDir, "A7V00015.JPG"): "jpg from 101",
 	}
 	for path, content := range sourceFiles {
 		fsys.addFile(path, content)
@@ -175,11 +175,15 @@ func TestCleanSDCardRecursivelyProcessesIncrementedCameraDirectories(t *testing.
 
 	rawEntries, err := fsys.ReadDir(dirDst)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"DSC09999.ARW", "DSC10000.ARW"}, entryNames(rawEntries))
+	assert.ElementsMatch(t, []string{"A7V10000015.ARW", "A7V10100015.ARW"}, entryNames(rawEntries))
+	assert.Equal(t, []byte("raw from 100"), fsys.files[cleanFakePath(filepath.Join(dirDst, "A7V10000015.ARW"))])
+	assert.Equal(t, []byte("raw from 101"), fsys.files[cleanFakePath(filepath.Join(dirDst, "A7V10100015.ARW"))])
 
 	jpgEntries, err := fsys.ReadDir(dirDstJPG)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"DSC09999.JPG", "DSC10000.JPG"}, entryNames(jpgEntries))
+	assert.ElementsMatch(t, []string{"A7V10000015.JPG", "A7V10100015.JPG"}, entryNames(jpgEntries))
+	assert.Equal(t, []byte("jpg from 100"), fsys.files[cleanFakePath(filepath.Join(dirDstJPG, "A7V10000015.JPG"))])
+	assert.Equal(t, []byte("jpg from 101"), fsys.files[cleanFakePath(filepath.Join(dirDstJPG, "A7V10100015.JPG"))])
 
 	firstSourceEntries, err := fsys.ReadDir(firstCameraDir)
 	require.NoError(t, err)
@@ -188,6 +192,41 @@ func TestCleanSDCardRecursivelyProcessesIncrementedCameraDirectories(t *testing.
 	secondSourceEntries, err := fsys.ReadDir(secondCameraDir)
 	require.NoError(t, err)
 	assert.Empty(t, secondSourceEntries)
+}
+
+func TestPhotoDestinationFileName(t *testing.T) {
+	tests := []struct {
+		name string
+		file sourceFile
+		want string
+	}{
+		{
+			name: "inserts parent folder number before JPG sequence",
+			file: sourceFile{name: "A7V00015.JPG", path: filepath.Join("DCIM", "101MSDCF", "A7V00015.JPG")},
+			want: "A7V10100015.JPG",
+		},
+		{
+			name: "inserts parent folder number before ARW sequence",
+			file: sourceFile{name: "A7V00015.ARW", path: filepath.Join("DCIM", "101MSDCF", "A7V00015.ARW")},
+			want: "A7V10100015.ARW",
+		},
+		{
+			name: "preserves name when parent has no numeric prefix",
+			file: sourceFile{name: "A7V00015.JPG", path: filepath.Join("DCIM", "MISC", "A7V00015.JPG")},
+			want: "A7V00015.JPG",
+		},
+		{
+			name: "preserves name without five digit sequence",
+			file: sourceFile{name: "thumbnail.JPG", path: filepath.Join("DCIM", "101MSDCF", "thumbnail.JPG")},
+			want: "thumbnail.JPG",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, photoDestinationFileName(tt.file))
+		})
+	}
 }
 
 func entryNames(entries []os.DirEntry) []string {

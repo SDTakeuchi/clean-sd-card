@@ -9,6 +9,7 @@ This tool copies `.arw` and `.raw` photos, plus `.mp4` videos and their `.xml` m
 ## Features
 
 - **Copy:** Recursively finds `.arw` and `.raw` files below the photo source directory and copies them to the destination.
+- **Collision-safe Photo Names:** Inserts the camera folder number before the five-digit image sequence when copying photos (for example, `101MSDCF/A7V00015.JPG` becomes `A7V10100015.JPG`). Video file names are unchanged.
 - **Video Copy:** Copies `.mp4` videos and their `.xml` metadata files to a separate destination without removing the source files.
 - **Clean (opt-in):** Removes all files from the source directory tree after processing when `-keep-src=false` is passed.
 - **Zombie Edit File Cleanup:** Automatically removes orphaned `.xmp` edit files (Lightroom sidecar files) that no longer have a corresponding RAW file.
