@@ -1,17 +1,17 @@
 # Clean SD Card
 
-A simple Go utility designed to offload RAW image and video files from an SD card to local drives and optionally clean up the photo source directory.
+A simple Go utility designed to offload RAW image and video files from an SD card to local drives and optionally clean up their source directories.
 
 ## Description
 
-This tool copies `.arw` and `.raw` photos, plus `.mp4` videos and their `.xml` metadata files, from an SD card to separate destinations. By default, source files are left untouched; pass `-keep-src=false` to remove files from the photo source directory after copying, to free up space. Video source files are always kept.
+This tool copies `.arw` and `.raw` photos, plus `.mp4` videos and their `.xml` metadata files, from an SD card to separate destinations. By default, source files are left untouched; pass `-keep-src=false` to remove processed photo and video files after copying, to free up space. Video source files are removed only after all video copies succeed.
 
 ## Features
 
 - **Copy:** Recursively finds `.arw` and `.raw` files below the photo source directory and copies them to the destination.
 - **Collision-safe Photo Names:** Inserts the camera folder number before the five-digit image sequence when copying photos (for example, `101MSDCF/A7V00015.JPG` becomes `A7V10100015.JPG`). Video file names are unchanged.
-- **Video Copy:** Copies `.mp4` videos and their `.xml` metadata files to a separate destination without removing the source files.
-- **Clean (opt-in):** Removes all files from the source directory tree after processing when `-keep-src=false` is passed.
+- **Video Copy:** Copies `.mp4` videos and their `.xml` metadata files to a separate destination and optionally removes the copied source files.
+- **Clean (opt-in):** Removes files from the photo source directory tree and processed video files after copying when `-keep-src=false` is passed. Video cleanup starts only when every video copy succeeds.
 - **Zombie Edit File Cleanup:** Automatically removes orphaned `.xmp` edit files (Lightroom sidecar files) that no longer have a corresponding RAW file.
 - **Dry Run:** Simulate the process to see what would happen without making actual changes.
 - **Overwrite Control:** Option to overwrite existing files in the destination.
@@ -68,7 +68,7 @@ go run . -src /path/to/sd/card -dst /path/to/backup
 ```
 
 **5. Clean the SD Card**
-Copy files and then remove them from the photo source directory to free up space. Video files remain on the SD card:
+Copy files and then remove processed photos and videos from their source directories to free up space:
 ```bash
 go run . -keep-src=false
 ```

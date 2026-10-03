@@ -28,16 +28,17 @@ func TestCopyVideoFiles(t *testing.T) {
 	fsys.addFile(filepath.Join(dirSrc, "clip2M01.XML"), "metadata")
 	fsys.addFile(filepath.Join(dirSrc, "thumbnail.jpg"), "image")
 
-	copied, err := copyVideoFiles(
+	copied, removed, err := copyVideoFiles(
 		fsys,
 		[]string{"mp4", "xml"},
 		dirSrc,
 		dirDst,
-		Options{Concurrency: testConcurrency},
+		Options{KeepSrc: true, Concurrency: testConcurrency},
 	)
 
 	require.NoError(t, err)
 	assert.Equal(t, 3, copied)
+	assert.Zero(t, removed)
 
 	destinationEntries, err := fsys.ReadDir(dirDst)
 	require.NoError(t, err)
@@ -51,6 +52,94 @@ func TestCopyVideoFiles(t *testing.T) {
 	sourceEntries, err := fsys.ReadDir(dirSrc)
 	require.NoError(t, err)
 	assert.Len(t, sourceEntries, 4, "video copies must not remove files from the SD card")
+}
+
+func TestCopyVideoFilesRemovesProcessedSourcesWhenKeepSrcIsDisabled(t *testing.T) {
+	fsys := newFakeFileSystem()
+	dirSrc := "video-src"
+	dirDst := "video-dst"
+
+	fsys.addFile(filepath.Join(dirSrc, "clip.mp4"), "video")
+	fsys.addFile(filepath.Join(dirSrc, "clipM01.xml"), "metadata")
+	fsys.addFile(filepath.Join(dirSrc, "thumbnail.jpg"), "unprocessed image")
+
+	copied, removed, err := copyVideoFiles(
+		fsys,
+		[]string{"mp4", "xml"},
+		dirSrc,
+		dirDst,
+		Options{KeepSrc: false, Concurrency: testConcurrency},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, copied)
+	assert.Equal(t, 2, removed)
+
+	sourceEntries, err := fsys.ReadDir(dirSrc)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"thumbnail.jpg"}, entryNames(sourceEntries), "unprocessed files must remain in the source")
+}
+
+func TestCopyVideoFilesDoesNotRemoveSourcesAfterCopyFailure(t *testing.T) {
+	base := newFakeFileSystem()
+	dirSrc := "video-src"
+	dirDst := "video-dst"
+
+	base.addFile(filepath.Join(dirSrc, "clip1.mp4"), "video 1")
+	base.addFile(filepath.Join(dirSrc, "clip2.mp4"), "video 2")
+	fsys := failingCopyFileSystem{FileSystem: base, failSource: filepath.Join(dirSrc, "clip2.mp4")}
+
+	copied, removed, err := copyVideoFiles(
+		fsys,
+		[]string{"mp4", "xml"},
+		dirSrc,
+		dirDst,
+		Options{KeepSrc: false, Concurrency: 1},
+	)
+
+	require.Error(t, err)
+	assert.Equal(t, 1, copied)
+	assert.Zero(t, removed)
+
+	sourceEntries, readErr := base.ReadDir(dirSrc)
+	require.NoError(t, readErr)
+	assert.ElementsMatch(t, []string{"clip1.mp4", "clip2.mp4"}, entryNames(sourceEntries), "no source may be removed when any copy fails")
+}
+
+func TestCopyVideoFilesDoesNotRemoveSourcesSkippedDuringCopy(t *testing.T) {
+	fsys := newFakeFileSystem()
+	dirSrc := "video-src"
+	dirDst := "video-dst"
+
+	fsys.addFile(filepath.Join(dirSrc, "clip.mp4"), "source video")
+	fsys.addFile(filepath.Join(dirDst, "clip.mp4"), "existing destination")
+
+	copied, removed, err := copyVideoFiles(
+		fsys,
+		[]string{"mp4"},
+		dirSrc,
+		dirDst,
+		Options{KeepSrc: false, Overwrite: false, Concurrency: testConcurrency},
+	)
+
+	require.NoError(t, err)
+	assert.Zero(t, copied)
+	assert.Zero(t, removed)
+	sourceEntries, readErr := fsys.ReadDir(dirSrc)
+	require.NoError(t, readErr)
+	assert.Equal(t, []string{"clip.mp4"}, entryNames(sourceEntries), "a source skipped during copying must be retained")
+}
+
+type failingCopyFileSystem struct {
+	FileSystem
+	failSource string
+}
+
+func (f failingCopyFileSystem) CopyFile(src, dst string) error {
+	if cleanFakePath(src) == cleanFakePath(f.failSource) {
+		return fmt.Errorf("simulated copy failure")
+	}
+	return f.FileSystem.CopyFile(src, dst)
 }
 
 func TestCleanSDCard(t *testing.T) {
