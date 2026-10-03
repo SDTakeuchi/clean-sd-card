@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 )
 
@@ -96,7 +97,7 @@ func main() {
 	}
 
 	log.Printf("Starting copying video files from %s to %s with extensions %v\n", dirVideoSrc, dirVideoDst, videoExtensions)
-	videoCopied, err := copyVideoFiles(
+	videoCopied, videoRemoved, err := copyVideoFiles(
 		fsys,
 		videoExtensions,
 		dirVideoSrc,
@@ -107,7 +108,7 @@ func main() {
 		log.Fatalf("failed copying video files: %s", err.Error())
 	}
 
-	log.Printf("\nSummary:\nFiles Copied: %d\nFiles Removed: %d\n", totalCopied+videoCopied, removedCount)
+	log.Printf("\nSummary:\nFiles Copied: %d\nFiles Removed: %d\n", totalCopied+videoCopied, removedCount+videoRemoved)
 	logStorageSummary(dirSrc, dirDst, dirDstJPG, dirVideoSrc, dirVideoDst)
 }
 
@@ -161,31 +162,56 @@ func formatBytes(bytes uint64) string {
 	return fmt.Sprintf("%.2f EB (%d bytes)", value, bytes)
 }
 
-// copyVideoFiles copies video files from dirSrc to dirDst without removing
-// anything from the source directory.
+// copyVideoFiles copies video files from dirSrc to dirDst and, when KeepSrc is
+// false, removes only the matching source files after every copy has
+// succeeded. This ordering prevents a partial copy failure from causing any
+// source video or metadata file to be deleted.
 func copyVideoFiles(
 	fsys FileSystem,
 	videoExtensions []string,
 	dirSrc, dirDst string,
 	opts Options,
-) (int, error) {
+) (int, int, error) {
 	entries, err := fsys.ReadDir(dirSrc)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read video source directory: %w", err)
+		return 0, 0, fmt.Errorf("failed to read video source directory: %w", err)
 	}
 
 	if !opts.DryRun {
 		if err := fsys.MkdirAll(dirDst, 0755); err != nil {
-			return 0, fmt.Errorf("failed to create video destination directory: %w", err)
+			return 0, 0, fmt.Errorf("failed to create video destination directory: %w", err)
 		}
 	}
 
 	copied, err := copyFiles(fsys, entries, dirSrc, dirDst, videoExtensions, opts.DryRun, opts.Overwrite, opts.Concurrency)
 	if err != nil {
-		return copied, fmt.Errorf("failed to copy video files with extensions %v (copied %d): %w", videoExtensions, copied, err)
+		return copied, 0, fmt.Errorf("failed to copy video files with extensions %v (copied %d): %w", videoExtensions, copied, err)
 	}
 
-	return copied, nil
+	matchingEntries := make([]os.DirEntry, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && matchesAnyExtension(entry.Name(), videoExtensions) {
+			matchingEntries = append(matchingEntries, entry)
+		}
+	}
+
+	if opts.DryRun || opts.KeepSrc {
+		return copied, 0, nil
+	}
+	// A skipped destination is not proof that this run copied the complete
+	// source file. Be conservative and retain every source unless each matching
+	// file was successfully copied during this run.
+	if copied != len(matchingEntries) {
+		log.Printf("keeping video source files because only %d of %d files were copied\n", copied, len(matchingEntries))
+		return copied, 0, nil
+	}
+
+	removed, err := removeFiles(fsys, matchingEntries, dirSrc, opts.Concurrency)
+	if err != nil {
+		return copied, removed, fmt.Errorf("failed to remove copied video source files: %w", err)
+	}
+
+	return copied, removed, nil
 }
 
 // cleanSDCard copies files from dirSrc to dirDst and removes files from dirSrc.
