@@ -24,7 +24,9 @@ type FileSystem interface {
 }
 
 // osFileSystem implements FileSystem using the real OS filesystem.
-type osFileSystem struct{}
+type osFileSystem struct {
+	progress *progressDisplay
+}
 
 func (osFileSystem) ReadDir(dir string) ([]os.DirEntry, error) {
 	return os.ReadDir(dir)
@@ -34,20 +36,40 @@ func (osFileSystem) Stat(path string) (os.FileInfo, error) {
 	return os.Stat(path)
 }
 
-func (osFileSystem) Remove(path string) error {
-	return os.Remove(path)
+func (f osFileSystem) Remove(path string) error {
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if f.progress != nil {
+		f.progress.Removed()
+	}
+	return nil
 }
 
 func (osFileSystem) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
 
-func (osFileSystem) CopyFile(src, dst string) error {
+func (f osFileSystem) CopyFile(src, dst string) (copyErr error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+	if f.progress != nil {
+		var size int64
+		if info, err := in.Stat(); err == nil {
+			size = info.Size()
+		}
+		f.progress.Begin(src, size)
+		defer func() {
+			if copyErr != nil {
+				f.progress.Failed(src)
+			} else {
+				f.progress.Copied(src)
+			}
+		}()
+	}
 
 	out, err := os.Create(dst)
 	if err != nil {
@@ -55,8 +77,12 @@ func (osFileSystem) CopyFile(src, dst string) error {
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, in)
-	return err
+	if f.progress == nil {
+		_, copyErr = io.Copy(out, in)
+	} else {
+		_, copyErr = io.CopyBuffer(progressWriter{Writer: out, progress: f.progress, path: src}, in, make([]byte, 256*1024))
+	}
+	return copyErr
 }
 
 type fileCopyError struct {
@@ -226,6 +252,9 @@ func copySourceFiles(fsys FileSystem, files []sourceFile, dstDir string, exts []
 
 		if !flagOverwrite {
 			if _, statErr := fsys.Stat(dstPath); statErr == nil {
+				if progress := progressFor(fsys); progress != nil {
+					progress.Skipped()
+				}
 				log.Printf("skipping copying existing file: %s\n", destinationName)
 				return 0, nil
 			}
@@ -240,7 +269,9 @@ func copySourceFiles(fsys FileSystem, files []sourceFile, dstDir string, exts []
 			return 0, fileCopyError{fileName: file.path, err: copyErr}
 		}
 
-		log.Printf("copied %s to %s\n", file.path, dstPath)
+		if progressFor(fsys) == nil {
+			log.Printf("copied %s to %s\n", file.path, dstPath)
+		}
 		return 1, nil
 	})
 }
@@ -304,7 +335,9 @@ func removeSourceFiles(fsys FileSystem, files []sourceFile, maxConcurrency int) 
 		if err := fsys.Remove(file.path); err != nil {
 			return 0, fmt.Errorf("failed to remove file %s: %w", file.path, err)
 		}
-		log.Printf("removed %s\n", file.path)
+		if progressFor(fsys) == nil {
+			log.Printf("removed %s\n", file.path)
+		}
 		return 1, nil
 	})
 }
