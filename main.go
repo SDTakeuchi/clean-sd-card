@@ -81,6 +81,22 @@ func main() {
 	}
 
 	fsys := osFileSystem{}
+	originalLogOutput := log.Writer()
+	var progress *progressDisplay
+	if !opts.DryRun {
+		progress = newTerminalProgress(os.Stderr)
+	}
+	if progress != nil {
+		fsys.progress = progress
+		log.SetOutput(progress)
+	}
+	finishProgress := func() {
+		if progress != nil {
+			log.SetOutput(originalLogOutput)
+			progress.Close()
+			progress = nil
+		}
+	}
 
 	totalCopied, removedCount, err := cleanSDCard(
 		fsys,
@@ -93,6 +109,7 @@ func main() {
 		opts,
 	)
 	if err != nil {
+		finishProgress()
 		log.Fatalf("failed cleaning SD card: %s", err.Error())
 	}
 
@@ -105,9 +122,11 @@ func main() {
 		opts,
 	)
 	if err != nil {
+		finishProgress()
 		log.Fatalf("failed copying video files: %s", err.Error())
 	}
 
+	finishProgress()
 	log.Printf("\nSummary:\nFiles Copied: %d\nFiles Removed: %d\n", totalCopied+videoCopied, removedCount+videoRemoved)
 	logStorageSummary(dirSrc, dirDst, dirDstJPG, dirVideoSrc, dirVideoDst)
 }
