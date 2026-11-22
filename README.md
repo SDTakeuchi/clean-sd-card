@@ -14,7 +14,7 @@ This tool copies `.arw` and `.raw` photos, plus `.mp4` videos and their `.xml` m
 - **Clean (opt-in):** Removes files from the photo source directory tree and processed video files after copying when `-keep-src=false` is passed. Video cleanup starts only when every video copy succeeds.
 - **Zombie Edit File Cleanup:** Automatically removes orphaned `.xmp` edit files (Lightroom sidecar files) that no longer have a corresponding RAW file.
 - **Dry Run:** Simulate the process to see what would happen without making actual changes.
-- **Live Progress:** On a terminal, show overall copied bytes and file counts plus a progress bar for each active copy. Redirected output keeps the regular logs.
+- **Live Progress:** On a terminal, show the overall percentage across photo, JPG, and video copies, plus a bar for each active file. Skipped files count as processed; redirected output keeps regular logs.
 - **Overwrite Control:** Option to overwrite existing files in the destination.
 
 ## Usage

@@ -98,29 +98,47 @@ func main() {
 		}
 	}
 
-	totalCopied, removedCount, err := cleanSDCard(
-		fsys,
-		editFileExtensions,
-		extensionsToCopy,
-		extensionsJPG,
-		dirSrc,
-		dirDst,
-		dirDstJPG,
-		opts,
-	)
+	var sourceFiles []sourceFile
+	var videoEntries []os.DirEntry
+	if progress != nil {
+		var err error
+		sourceFiles, err = listFilesRecursively(fsys, dirSrc)
+		if err != nil {
+			finishProgress()
+			log.Fatalf("failed to read photo source directory: %s", err)
+		}
+		videoEntries, err = fsys.ReadDir(dirVideoSrc)
+		if err != nil {
+			finishProgress()
+			log.Fatalf("failed to read video source directory: %s", err)
+		}
+		plan, err := buildCopyPlan(fsys, sourceFiles, videoEntries, dirVideoSrc, extensionsToCopy, extensionsJPG, videoExtensions, opts.KeepJPG)
+		if err != nil {
+			finishProgress()
+			log.Fatalf("failed to plan copy progress: %s", err)
+		}
+		progress.SetPlan(plan)
+	}
+
+	var totalCopied, removedCount int
+	var err error
+	if progress != nil {
+		totalCopied, removedCount, err = cleanSDCardWithFiles(fsys, sourceFiles, editFileExtensions, extensionsToCopy, extensionsJPG, dirSrc, dirDst, dirDstJPG, opts)
+	} else {
+		totalCopied, removedCount, err = cleanSDCard(fsys, editFileExtensions, extensionsToCopy, extensionsJPG, dirSrc, dirDst, dirDstJPG, opts)
+	}
 	if err != nil {
 		finishProgress()
 		log.Fatalf("failed cleaning SD card: %s", err.Error())
 	}
 
 	log.Printf("Starting copying video files from %s to %s with extensions %v\n", dirVideoSrc, dirVideoDst, videoExtensions)
-	videoCopied, videoRemoved, err := copyVideoFiles(
-		fsys,
-		videoExtensions,
-		dirVideoSrc,
-		dirVideoDst,
-		opts,
-	)
+	var videoCopied, videoRemoved int
+	if progress != nil {
+		videoCopied, videoRemoved, err = copyVideoFilesWithEntries(fsys, videoEntries, videoExtensions, dirVideoSrc, dirVideoDst, opts)
+	} else {
+		videoCopied, videoRemoved, err = copyVideoFiles(fsys, videoExtensions, dirVideoSrc, dirVideoDst, opts)
+	}
 	if err != nil {
 		finishProgress()
 		log.Fatalf("failed copying video files: %s", err.Error())
@@ -195,7 +213,16 @@ func copyVideoFiles(
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to read video source directory: %w", err)
 	}
+	return copyVideoFilesWithEntries(fsys, entries, videoExtensions, dirSrc, dirDst, opts)
+}
 
+func copyVideoFilesWithEntries(
+	fsys FileSystem,
+	entries []os.DirEntry,
+	videoExtensions []string,
+	dirSrc, dirDst string,
+	opts Options,
+) (int, int, error) {
 	if !opts.DryRun {
 		if err := fsys.MkdirAll(dirDst, 0755); err != nil {
 			return 0, 0, fmt.Errorf("failed to create video destination directory: %w", err)
@@ -241,19 +268,25 @@ func cleanSDCard(
 	dirSrc, dirDst, dirDstJPG string,
 	opts Options,
 ) (int, int, error) {
+	// Camera folders under DCIM can be incremented, so include nested files.
+	sourceFiles, err := listFilesRecursively(fsys, dirSrc)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to read source directory: %w", err)
+	}
+	return cleanSDCardWithFiles(fsys, sourceFiles, editFileExtensions, extensionsToCopy, extensionsJPG, dirSrc, dirDst, dirDstJPG, opts)
+}
+
+func cleanSDCardWithFiles(
+	fsys FileSystem,
+	sourceFiles []sourceFile,
+	editFileExtensions, extensionsToCopy, extensionsJPG []string,
+	dirSrc, dirDst, dirDstJPG string,
+	opts Options,
+) (int, int, error) {
 	if !opts.DryRun {
 		if err := fsys.MkdirAll(dirDst, 0755); err != nil {
 			return 0, 0, fmt.Errorf("failed to create destination directory: %w", err)
 		}
-	}
-
-	// Walk dirSrc once and reuse the result for the raw copy, JPG copy, and
-	// removal steps below. Camera folders under DCIM can be incremented (for
-	// example, 100MSDCF to 101MSDCF), so every nested directory must be
-	// included without re-reading the SD card for each extension group.
-	sourceFiles, err := listFilesRecursively(fsys, dirSrc)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to read source directory: %w", err)
 	}
 
 	// copy raw files

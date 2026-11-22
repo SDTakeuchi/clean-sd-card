@@ -253,7 +253,7 @@ func copySourceFiles(fsys FileSystem, files []sourceFile, dstDir string, exts []
 		if !flagOverwrite {
 			if _, statErr := fsys.Stat(dstPath); statErr == nil {
 				if progress := progressFor(fsys); progress != nil {
-					progress.Skipped()
+					progress.Skipped(file.path)
 				}
 				log.Printf("skipping copying existing file: %s\n", destinationName)
 				return 0, nil
